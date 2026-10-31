@@ -92,4 +92,11 @@ void main() {
     expect(nameMatchScore('chuoj', 'Bánh chuối'), greaterThan(0));
     expect(nameMatchScore('tao', 'Bánh chuối'), 0);
   });
+
+  test('mã lệch đúng một số với sản phẩm đã có → gợi ý sản phẩm đó', () {
+    expect(cache.similarBarcodes('9901234564567').map((p) => p.product.name), ["Bánh Ella's dâu chuối"]);
+    expect(cache.similarBarcodes('8901234564567'), isEmpty); // trùng hẳn: không phải "gần giống"
+    expect(cache.similarBarcodes('9901234564568'), isEmpty); // lệch 2 số
+    expect(cache.similarBarcodes('012345678904').map((p) => p.product.name), ['Sữa chua Kiddylicious']); // UPC-A 12 số
+  });
 }

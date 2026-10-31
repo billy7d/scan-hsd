@@ -38,7 +38,8 @@ class _EntryScreenState extends State<EntryScreen> {
   bool _saving = false;
   bool _tried = false;
 
-  String get _barcode => (widget.barcode ?? widget.preset?.barcode ?? '').trim();
+  /// Đổi được khi người dùng chọn sản phẩm có mã gần giống (mã vừa quét bị đọc lệch).
+  late String _barcode = (widget.barcode ?? widget.preset?.barcode ?? '').trim();
 
   @override
   void initState() {
@@ -86,6 +87,15 @@ class _EntryScreenState extends State<EntryScreen> {
         _price.text = formatPrice(hit.product.price).replaceAll(' ₫', '');
       }
     });
+  }
+
+  /// Mã vừa quét lệch một số so với sản phẩm đã có → dùng sản phẩm đó thay vì tạo bản ghi mới.
+  void _useSimilar(Product p) {
+    setState(() {
+      _barcode = p.barcode;
+      _fill(p);
+    });
+    _revalidate();
   }
 
   Future<void> _pickNoBarcode() async {
@@ -235,7 +245,22 @@ class _EntryScreenState extends State<EntryScreen> {
           child: Row(children: [Icon(icon), const SizedBox(width: 10), Expanded(child: Text(text))]),
         );
     if (_known != null) return box(Colors.green.shade100, Icons.check_circle, 'Sản phẩm đã có — tên và giá đã điền sẵn');
-    if (_barcode.isNotEmpty) return box(Colors.amber.shade100, Icons.fiber_new, 'Mã vạch mới — nhập tên và giá một lần');
+    if (_barcode.isNotEmpty) {
+      final similar = _cache.similarBarcodes(_barcode);
+      if (similar.isEmpty) return box(Colors.amber.shade100, Icons.fiber_new, 'Mã vạch mới — nhập tên và giá một lần');
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        box(Colors.orange.shade200, Icons.warning_amber,
+            'Mã vạch mới nhưng gần giống sản phẩm đã có (khác 1 số) — có thể camera đọc nhầm. Đối chiếu dãy số trên bao bì:'),
+        for (final p in similar) ...[
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.swap_horiz),
+            label: Text('Đúng là: ${p.product.name}\n${p.product.barcode}', textAlign: TextAlign.center),
+            onPressed: () => _useSimilar(p.product),
+          ),
+        ],
+      ]);
+    }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       box(Theme.of(context).colorScheme.surfaceContainerHighest, Icons.inventory_2, 'Hàng không mã vạch — nhận diện theo tên'),
       if (_cache.withoutBarcode.isNotEmpty) ...[

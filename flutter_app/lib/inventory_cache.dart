@@ -151,6 +151,23 @@ class InventoryCache extends ChangeNotifier {
   /// Mã vạch phải trùng khớp (UPC 12 số = EAN-13 số 0 đầu).
   ProductSummary? byBarcode(String code) => code.trim().isEmpty ? null : byKey(productKey(code, ''));
 
+  /// Sản phẩm có mã vạch cùng độ dài, khác đúng một số với [code] — dễ là cùng một sản phẩm bị
+  /// camera đọc lệch hoặc gõ nhầm (vd 5000157065759 / 9000157065759).
+  List<ProductSummary> similarBarcodes(String code) {
+    final c = normBarcode(code);
+    if (c.length < 8) return const [];
+    bool near(String b) {
+      if (b.length != c.length || b == c) return false;
+      var diff = 0;
+      for (var i = 0; i < b.length && diff < 2; i++) {
+        if (b.codeUnitAt(i) != c.codeUnitAt(i)) diff++;
+      }
+      return diff == 1;
+    }
+
+    return _products.where((p) => near(normBarcode(p.product.barcode))).toList();
+  }
+
   /// Tìm theo tên gần đúng (không dấu, sai 1–2 chữ cái, gõ đầu chữ) hoặc theo mã / đuôi mã (≥ 4 số).
   List<ProductSummary> search(String query, {int limit = 30, ExpiryFilter filter = ExpiryFilter.all, DateTime? now}) {
     now ??= DateTime.now();

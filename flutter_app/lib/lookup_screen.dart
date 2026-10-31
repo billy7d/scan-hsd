@@ -259,6 +259,18 @@ class _ProductScreenState extends State<ProductScreen> {
           const SizedBox(height: 8),
           Text('Chưa có trong kho', style: Theme.of(context).textTheme.titleLarge),
           if (_barcode.isNotEmpty) Text('Mã $_barcode'),
+          // Lệch một số so với sản phẩm đã có → nhiều khả năng camera đọc nhầm.
+          for (final p in _barcode.isEmpty ? const <ProductSummary>[] : _cache.similarBarcodes(_barcode)) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.swap_horiz),
+              label: Text('Có phải: ${p.product.name}\n${p.product.barcode}', textAlign: TextAlign.center),
+              onPressed: () {
+                setState(() => _key = p.key);
+                _revalidate();
+              },
+            ),
+          ],
           const SizedBox(height: 16),
           if (_barcode.isNotEmpty)
             FilledButton.icon(
