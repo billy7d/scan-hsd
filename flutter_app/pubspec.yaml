@@ -1,0 +1,24 @@
+name: kho_an_dam_app
+description: Quét mã vạch nhập kho / tra cứu đồ ăn dặm — ghi vào Google Sheets.
+publish_to: 'none'
+version: 2.0.0+2
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  mobile_scanner: ^7.0.1
+  http: ^1.2.2
+  path_provider: ^2.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
