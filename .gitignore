@@ -1,1 +1,4 @@
 .DS_Store
+
+# Bản Code.gs có key thật để dán vào Apps Script — không đưa lên git.
+apps_script/Code.paste.gs
