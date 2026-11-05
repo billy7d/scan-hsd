@@ -10,11 +10,14 @@
    - đảm bảo có đủ 6 tiêu đề: Mã vạch | Tên sản phẩm | Date (HSD) | Số lượng | Giá bán | ID (sheet trống → ghi vào A→F; thiếu tiêu đề nào thì thêm vào cuối);
    - không xoá, không đụng tới cột bạn tự thêm;
    - định dạng giá ₫, tô **đỏ** = hết hạn, **vàng** = còn ≤ 90 ngày;
-   - ẩn cột ID — đừng sửa cột này.
-   Đã chạy `caiDat` từ bản trước thì không cần chạy lại.
+   - ẩn cột ID — đừng sửa cột này;
+   - sửa cột **Giá bán**: ô đang chứa mã rác (ID cũ như `9a0649ba`, `2.6E+58 ₫`) → lấy giá date khác cùng sản phẩm, không có thì để trống để nhập lại; giá gõ tay dạng chữ "140.000" → đổi thành số.
+   Không chạy `caiDat` cũng được: việc sửa cột giá tự chạy ở lần ghi / tải dữ liệu đầu tiên sau khi Deploy.
 6. **Deploy > Manage deployments > ✏️ Edit > Version: New version > Deploy**. URL giữ nguyên nên không phải sửa app.
 
 > Cột được tìm theo **tên tiêu đề ở dòng 1**, không theo vị trí: bạn có thể chèn thêm cột tự nhập ở bất kỳ đâu, kéo đổi thứ tự cột. Chỉ cần **giữ nguyên chữ** 6 tiêu đề gốc (không đổi tên, không xoá) — thiếu tiêu đề nào app sẽ báo lỗi chứ không ghi lệch cột.
+
+**Giá bán**: số nguyên, tối đa 10.000.000 ₫. Ghi hàng mà để trống ô giá → giữ giá đang có (không bị về 0). Muốn đổi giá: nhập giá mới khi ghi, hoặc ĐỌC → ✏️ sửa tên / giá.
 
 ## 2. Cài app trên Samsung S24 Ultra
 

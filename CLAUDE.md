@@ -26,6 +26,8 @@ Chủ shop bán đồ ăn dặm nhập khẩu (hàng Anh: Heinz, Ella's Kitchen,
 
 Sheet `TonKho`, 6 cột **tìm theo tên tiêu đề ở dòng 1** (không theo vị trí — chủ shop được chèn cột tự nhập, đổi thứ tự): **Mã vạch | Tên sản phẩm | Date (HSD) | Số lượng | Giá bán | ID** (ID ẩn, bảo vệ chỉ cảnh báo — để sửa đúng dòng kể cả khi sheet bị sắp xếp lại). Mỗi dòng = một date của một sản phẩm. Date ghi lúc 12:00 trưa để không lệch ngày giữa múi giờ.
 
+Giá bán (2026-11-05): số nguyên 0..10.000.000 ₫ (`MAX_PRICE` trong Code.gs = `maxPrice` trong `date_parser.dart`). Sheet cũ từng có ID 8 ký tự nằm trong cột giá (vd. `9a0649ba`, `59970494`, `2.6E+58`) → đọc ra 0; `damBaoGia_` (chạy cùng `damBaoId_` trước mỗi lệnh ghi/snapshot) tự sửa ô rác: lấy giá date khác cùng sản phẩm, không có thì để trống; chữ "140.000" → số. `add` với giá trống/0 **giữ giá đang lưu**; đặt giá 0 thì dùng `updateProduct`. Giá sai / > max → lỗi, không ghi.
+
 API (mọi request kèm `key`; ghi bọc `LockService`; mọi lệnh ghi gọi `damBaoId_` trước):
 - `GET ?action=lookup&barcode=` → `{found, product:{barcode,name,price}, lots:[{id,hsd,qty}]}`
 - `GET ?action=snapshot` → `{rows:[[id, barcode, name, hsd, qty, price]]}`
@@ -44,7 +46,7 @@ Môi trường Windows: Flutter 3.47.7 tại `D:\dev\flutter`, Android SDK `D:\d
 | File | Nội dung |
 |---|---|
 | `apps_script/Code.gs` | Bản 6 cột, vị trí cột đọc từ tiêu đề (`cols_()`); thiếu tiêu đề → báo lỗi. Ghi từng ô vào đúng cột, không đụng cột tự thêm. `caiDat()` thêm tiêu đề còn thiếu vào cuối, bảo vệ + ẩn cột ID, tô màu ≤ 90 ngày. |
-| `apps_script/test/code_gs.test.js` | 15 test Node giả lập SpreadsheetApp (`node apps_script/test/code_gs.test.js`), gồm đổi thứ tự cột và thiếu tiêu đề. |
+| `apps_script/test/code_gs.test.js` | 20 test Node giả lập SpreadsheetApp (`node apps_script/test/code_gs.test.js`), gồm đổi thứ tự cột, thiếu tiêu đề, giá rác / giá dạng chữ. |
 | `flutter_app/lib/main.dart` | Màn chính: 2 nút lớn GHI / ĐỌC, ô tìm theo tên, đếm ≤ 90 ngày / hết hạn, ghi hàng không mã. |
 | `lib/scanner_screen.dart` | Quét + công tắc Ghi/Đọc + `scanLoop()` quét liên tục. |
 | `lib/entry_screen.dart` | GHI: tên, giá, nhiều dòng date + số lượng, hỏi cộng dồn (trước khi gửi và khi sheet báo trùng). |

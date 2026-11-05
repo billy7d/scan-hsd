@@ -131,18 +131,20 @@ class QtyStepper extends StatelessWidget {
       ]);
 }
 
-/// Ô nhập giá: chỉ số, tự thêm dấu chấm hàng nghìn khi gõ (140000 → 140.000).
+/// Ô nhập giá: chỉ số, tự thêm dấu chấm hàng nghìn khi gõ (140000 → 140.000); vượt [maxPrice] → không nhận phím đó.
 class PriceInputFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
-    final digits = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+    final digits = newValue.text.replaceAll(RegExp(r'[^\d]'), '').replaceFirst(RegExp(r'^0+(?=\d)'), '');
     if (digits.isEmpty) return const TextEditingValue(text: '');
-    final text = formatPrice(int.parse(digits)).replaceAll(' ₫', '');
+    final n = int.tryParse(digits);
+    if (n == null || n > maxPrice) return oldValue;
+    final text = formatPrice(n).replaceAll(' ₫', '');
     return TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
   }
 }
 
-int parsePrice(String s) => int.tryParse(s.replaceAll(RegExp(r'[^\d]'), '')) ?? 0;
+int parsePrice(String s) => priceValue(s) ?? 0;
 
 /// "Dữ liệu lúc 14:05" + nút tải lại.
 class SyncStatus extends StatelessWidget {

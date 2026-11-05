@@ -19,6 +19,9 @@ const HEADERS = ['Mã vạch', 'Tên sản phẩm', 'Date (HSD)', 'Số lượng
 const FIELDS = ['BARCODE', 'NAME', 'HSD', 'QTY', 'PRICE', 'ID'];
 const PROTECT_DESC = 'ID - khong sua tay';
 const NEAR_EXPIRY_DAYS = 90;
+/** Giá bán tối đa hợp lệ (₫). Lớn hơn → coi là nhập nhầm / dữ liệu rác (vd. ID cũ nằm trong cột giá). */
+const MAX_PRICE = 10000000;
+const PRICE_FORMAT = '#,##0" ₫"';
 
 // ---------------------------------------------------------------- HTTP
 
@@ -68,7 +71,9 @@ function withLock_(fn) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    damBaoId_(getSheet_());
+    const sheet = getSheet_();
+    damBaoId_(sheet);
+    damBaoGia_(sheet);
     const result = fn();
     SpreadsheetApp.flush();
     return result;
@@ -140,11 +145,12 @@ function caiDat() {
   column(c.BARCODE, 1).setNumberFormat('@');
   column(c.HSD, 2).setNumberFormat('dd/MM/yyyy');
   column(c.QTY, 2).setNumberFormat('0');
-  column(c.PRICE, 2).setNumberFormat('#,##0" ₫"');
+  column(c.PRICE, 2).setNumberFormat(PRICE_FORMAT);
   column(c.ID, 1).setNumberFormat('@');
 
   chuanHoaHsd_(sheet);
   damBaoId_(sheet);
+  damBaoGia_(sheet);
 
   // Tô màu cả dòng: đỏ nhạt = đã hết hạn, vàng = còn ≤ 90 ngày. Quy tắc trên cả vùng nên dòng mới tự có màu.
   const range = sheet.getRange(2, 1, rowsBelow, sheet.getMaxColumns());
@@ -206,6 +212,34 @@ function damBaoId_(sheet) {
   if (changed) sheet.getRange(2, c.ID, n, 1).setValues(ids);
 }
 
+/**
+ * Sửa ô giá không phải số hợp lệ: giá dạng chữ ("140.000", "140.000 ₫") → số;
+ * rác (ID 8 ký tự còn sót, số > MAX_PRICE, chữ lạ) → lấy giá hợp lệ của date khác cùng sản phẩm, không có thì để trống.
+ */
+function damBaoGia_(sheet) {
+  const n = sheet.getLastRow() - 1;
+  if (n < 1) return;
+  const c = cols_(sheet);
+  const data = sheet.getRange(2, 1, n, c.max).getValues();
+  const known = {};
+  data.forEach(function (r) {
+    const p = cellToPrice_(r[c.PRICE - 1]);
+    const key = productKey_(String(r[c.BARCODE - 1]).trim(), String(r[c.NAME - 1]).trim());
+    if (p > 0 && !known[key]) known[key] = p;
+  });
+  const prices = data.map(function (r) { return [r[c.PRICE - 1]]; });
+  let changed = false;
+  for (let i = 0; i < n; i++) {
+    const v = prices[i][0];
+    if (v === '' || v === null || (typeof v === 'number' && isValidPrice_(v))) continue;
+    const p = cellToPrice_(v);
+    const key = productKey_(String(data[i][c.BARCODE - 1]).trim(), String(data[i][c.NAME - 1]).trim());
+    prices[i][0] = p > 0 || /^\s*0+\s*$/.test(String(v)) ? p : (known[key] || '');
+    changed = true;
+  }
+  if (changed) sheet.getRange(2, c.PRICE, n, 1).setNumberFormat(PRICE_FORMAT).setValues(prices);
+}
+
 function newId_(seen) {
   for (;;) {
     const id = Utilities.getUuid().replace(/-/g, '').slice(0, 8);
@@ -240,7 +274,7 @@ function readRows_() {
       name: name,
       hsd: cellToIso_(v[c.HSD - 1], tz),
       qty: Number(v[c.QTY - 1]) || 0,
-      price: Number(v[c.PRICE - 1]) || 0,
+      price: cellToPrice_(v[c.PRICE - 1]),
       id: String(v[c.ID - 1]).trim(),
     });
   }
@@ -285,12 +319,13 @@ function snapshot_() {
  *   {barcode?, name, price, lots: [{hsd, qty}], confirmMerge}
  * Date đã có → chưa xác nhận thì trả 'duplicate' cho date đó (không ghi), xác nhận thì cộng dồn.
  * Tên/giá khác bản đang lưu → cập nhật cho mọi date của sản phẩm (giá bán theo sản phẩm).
+ * Giá trống / 0 → giữ giá đang lưu (không ghi đè thành 0); đổi giá về 0 thì dùng updateProduct.
  */
 function add_(b) {
   const barcode = String(b.barcode || '').trim();
   const name = String(b.name || '').trim();
-  const price = toPrice_(b.price);
   if (!name) throw new Error('Thiếu tên sản phẩm');
+  const newPrice = toPrice_(b.price); // giá sai → báo lỗi trước khi ghi gì
   const lots = (b.lots || []).map(function (l) {
     const hsd = parseDate_(String(l.hsd || ''));
     if (!hsd) throw new Error('Date không hợp lệ: ' + l.hsd);
@@ -303,13 +338,12 @@ function add_(b) {
   const rows = readRows_();
   const key = productKey_(barcode, name);
   const same = rows.filter(function (r) { return productKey_(r.barcode, r.name) === key; });
+  const price = newPrice || (same.length ? productOf_(same).price : 0);
 
   // Tên / giá theo sản phẩm: cập nhật mọi dòng cũ nếu khác.
   same.forEach(function (r) {
-    if (r.name !== name || r.price !== price) {
-      sheet.getRange(r.r, c.NAME).setValue(name);
-      sheet.getRange(r.r, c.PRICE).setValue(price);
-    }
+    if (r.name !== name) sheet.getRange(r.r, c.NAME).setValue(name);
+    if (r.price !== price) sheet.getRange(r.r, c.PRICE).setNumberFormat(PRICE_FORMAT).setValue(price);
   });
 
   const seen = {};
@@ -333,9 +367,9 @@ function add_(b) {
     // Ghi từng ô vào đúng cột của nó — không đụng tới cột tự thêm (kể cả cột có công thức).
     sheet.getRange(next, c.BARCODE).setNumberFormat('@').setValue(barcode);
     sheet.getRange(next, c.NAME).setValue(name);
-    sheet.getRange(next, c.HSD).setValue(isoToDate_(l.hsd));
-    sheet.getRange(next, c.QTY).setValue(l.qty);
-    sheet.getRange(next, c.PRICE).setValue(price);
+    sheet.getRange(next, c.HSD).setNumberFormat('dd/MM/yyyy').setValue(isoToDate_(l.hsd));
+    sheet.getRange(next, c.QTY).setNumberFormat('0').setValue(l.qty);
+    sheet.getRange(next, c.PRICE).setNumberFormat(PRICE_FORMAT).setValue(price);
     sheet.getRange(next, c.ID).setNumberFormat('@').setValue(id);
     same.push({ r: next, barcode: barcode, name: name, hsd: l.hsd, qty: l.qty, price: price, id: id });
     next++;
@@ -420,7 +454,7 @@ function updateProduct_(b) {
   const c = cols_(sheet);
   rows.forEach(function (r) {
     sheet.getRange(r.r, c.NAME).setValue(name);
-    sheet.getRange(r.r, c.PRICE).setValue(price);
+    sheet.getRange(r.r, c.PRICE).setNumberFormat(PRICE_FORMAT).setValue(price);
   });
   return { ok: true, status: 'updated', rowsChanged: rows.length };
 }
@@ -450,11 +484,29 @@ function toQty_(v, allowZero) {
   return n;
 }
 
+/** Giá app gửi lên: số nguyên 0..MAX_PRICE, hoặc chữ "140.000" / "140,000 ₫". Sai → báo lỗi, không ghi. */
 function toPrice_(v) {
   if (v == null || v === '') return 0;
-  const n = Number(String(v).replace(/[^\d]/g, ''));
-  if (!isFinite(n) || n < 0) throw new Error('Giá bán không hợp lệ');
+  const n = typeof v === 'number' ? v : priceText_(v);
+  if (!isValidPrice_(n)) throw new Error('Giá bán không hợp lệ: ' + v);
   return n;
+}
+
+/** Giá đọc từ ô sheet; ô rác (ID cũ, số quá lớn, chữ lạ) → 0 để app không hiện giá sai. */
+function cellToPrice_(v) {
+  const n = typeof v === 'number' ? v : priceText_(v);
+  return isValidPrice_(n) ? n : 0;
+}
+
+function isValidPrice_(n) {
+  return typeof n === 'number' && isFinite(n) && n >= 0 && n <= MAX_PRICE && Math.floor(n) === n;
+}
+
+/** "140.000" | "140,000" | "140 000 ₫" | "140000đ" → 140000; có chữ khác (vd. "9a0649ba") → NaN. */
+function priceText_(s) {
+  s = String(s == null ? '' : s).trim().replace(/\s*(₫|đ|vnd|vnđ)$/i, '');
+  if (!/^\d{1,3}([.,\s]?\d{3})*$/.test(s)) return NaN;
+  return Number(s.replace(/[.,\s]/g, ''));
 }
 
 function pad2_(n) { return (n < 10 ? '0' : '') + n; }

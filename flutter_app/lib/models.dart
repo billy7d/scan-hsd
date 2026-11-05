@@ -11,7 +11,7 @@ class Product {
   const Product({this.barcode = '', required this.name, this.price = 0});
 
   factory Product.fromJson(Map<String, dynamic> j) =>
-      Product(barcode: _s(j['barcode']), name: _s(j['name']), price: _i(j['price']));
+      Product(barcode: _s(j['barcode']), name: _s(j['name']), price: priceValue(j['price']) ?? 0);
 
   /// Khoá sản phẩm giống server: mã vạch nếu có, không thì tên.
   String get key => productKey(barcode, name);
@@ -49,7 +49,7 @@ class InventoryRow {
   /// Dạng mảng của `snapshot`: [id, barcode, name, hsd, qty, price].
   factory InventoryRow.fromList(List<dynamic> r) => InventoryRow(
         id: _s(r[0]),
-        product: Product(barcode: _s(r[1]), name: _s(r[2]), price: r.length > 5 ? _i(r[5]) : 0),
+        product: Product(barcode: _s(r[1]), name: _s(r[2]), price: r.length > 5 ? priceValue(r[5]) ?? 0 : 0),
         hsd: _s(r[3]),
         qty: _i(r[4]),
       );

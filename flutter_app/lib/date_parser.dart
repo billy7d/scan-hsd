@@ -21,6 +21,23 @@ String formatIsoVn(String iso) {
   return d == null ? iso : formatVnDate(d);
 }
 
+/// Giá bán tối đa hợp lệ (₫) — giống MAX_PRICE trong Code.gs.
+const maxPrice = 10000000;
+
+/// Giá từ sheet / ô nhập: số nguyên 0..[maxPrice], hoặc chữ "140.000" / "140,000 ₫".
+/// Rác (ID cũ "9a0649ba", số quá lớn, số lẻ) → null.
+int? priceValue(dynamic v) {
+  num? n;
+  if (v is num) {
+    n = v;
+  } else {
+    final s = (v ?? '').toString().trim().replaceFirst(RegExp(r'\s*(₫|đ|vnd|vnđ)$', caseSensitive: false), '');
+    if (RegExp(r'^\d{1,3}([.,\s]?\d{3})*$').hasMatch(s)) n = int.tryParse(s.replaceAll(RegExp(r'[.,\s]'), ''));
+  }
+  if (n == null || !n.isFinite || n < 0 || n > maxPrice || n != n.roundToDouble()) return null;
+  return n.toInt();
+}
+
 /// 140000 → "140.000 ₫".
 String formatPrice(int vnd) {
   final s = vnd.toString();
