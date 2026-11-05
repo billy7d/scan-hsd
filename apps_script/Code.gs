@@ -3,6 +3,8 @@
  *
  * Cột được tìm theo TÊN TIÊU ĐỀ ở dòng 1, không theo vị trí: có thể chèn thêm cột tự nhập ở bất kỳ đâu,
  * kéo đổi thứ tự cột. Chỉ cần giữ nguyên 6 tiêu đề trong HEADERS (không đổi chữ, không xoá).
+ * Cột "Loại" (LOAI_HEADER) tự thêm vào cuối nếu chưa có: ghi "Lẻ" cho hàng bán lẻ, để trống = nguyên lốc.
+ * Hàng lẻ và hàng lốc cùng mã vạch + tên nhưng là các dòng riêng (date, số lượng, giá riêng).
  *
  * Cài đặt (xem HUONG_DAN.md):
  *   1. Extensions > Apps Script, dán toàn bộ file này.
@@ -17,6 +19,9 @@ const SHEET_NAME = 'TonKho';
 
 const HEADERS = ['Mã vạch', 'Tên sản phẩm', 'Date (HSD)', 'Số lượng', 'Giá bán', 'ID'];
 const FIELDS = ['BARCODE', 'NAME', 'HSD', 'QTY', 'PRICE', 'ID'];
+const LOAI_HEADER = 'Loại';
+const LE_TEXT = 'Lẻ';
+const MAX_PER_PACK = 1000;
 const PROTECT_DESC = 'ID - khong sua tay';
 const NEAR_EXPIRY_DAYS = 90;
 /** Giá bán tối đa hợp lệ (₫). Lớn hơn → coi là nhập nhầm / dữ liệu rác (vd. ID cũ nằm trong cột giá). */
@@ -44,6 +49,7 @@ function doPost(e) {
     checkKey_(body.key);
     const actions = {
       add: add_, adjust: adjust_, updateLot: updateLot_, deleteLot: deleteLot_, updateProduct: updateProduct_,
+      openPack: openPack_,
     };
     const fn = actions[body.action];
     if (!fn) throw new Error('action không hợp lệ: ' + body.action);
@@ -72,6 +78,7 @@ function withLock_(fn) {
   lock.waitLock(20000);
   try {
     const sheet = getSheet_();
+    damBaoCotLoai_(sheet);
     damBaoId_(sheet);
     damBaoGia_(sheet);
     const result = fn();
@@ -87,8 +94,9 @@ function withLock_(fn) {
 let colsCache_ = null;
 
 /**
- * Vị trí cột (bắt đầu từ 1) của 6 trường, đọc từ dòng tiêu đề: {BARCODE, NAME, HSD, QTY, PRICE, ID, max}.
- * `max` = cột xa nhất trong 6 cột, để chỉ đọc đến đó. Thiếu tiêu đề → báo lỗi, không đọc/ghi lệch.
+ * Vị trí cột (bắt đầu từ 1) của 6 trường, đọc từ dòng tiêu đề: {BARCODE, NAME, HSD, QTY, PRICE, ID, LOAI?, max}.
+ * `max` = cột xa nhất trong các cột đó, để chỉ đọc đến đó. Thiếu tiêu đề gốc → báo lỗi, không đọc/ghi lệch.
+ * Thiếu cột "Loại" thì LOAI không có → mọi dòng là hàng lốc.
  */
 function cols_(sheet) {
   if (colsCache_) return colsCache_;
@@ -105,6 +113,11 @@ function cols_(sheet) {
   if (missing.length) {
     throw new Error('Sheet ' + SHEET_NAME + ' thiếu cột ' + missing.join(', ') +
       ' ở dòng tiêu đề — đừng đổi tên hoặc xoá 6 cột gốc');
+  }
+  const loai = header.indexOf(norm_(LOAI_HEADER));
+  if (loai >= 0) {
+    c.LOAI = loai + 1;
+    c.max = Math.max(c.max, loai + 1);
   }
   colsCache_ = c;
   return c;
@@ -136,6 +149,7 @@ function caiDat() {
     sheet.getRange(1, end).setValue(h);
   });
   colsCache_ = null;
+  damBaoCotLoai_(sheet);
   const c = cols_(sheet);
   sheet.getRange(1, 1, 1, sheet.getLastColumn()).setFontWeight('bold');
   sheet.setFrozenRows(1);
@@ -173,6 +187,15 @@ function caiDat() {
   column(c.ID, 1).protect().setDescription(PROTECT_DESC).setWarningOnly(true);
   sheet.hideColumns(c.ID);
   sheet.setColumnWidth(c.NAME, 260);
+}
+
+/** Thêm tiêu đề "Loại" vào cột trống đầu tiên bên phải nếu sheet chưa có. */
+function damBaoCotLoai_(sheet) {
+  if (cols_(sheet).LOAI) return;
+  const col = sheet.getLastColumn() + 1;
+  if (col > sheet.getMaxColumns()) sheet.insertColumnAfter(sheet.getMaxColumns());
+  sheet.getRange(1, col).setValue(LOAI_HEADER).setFontWeight('bold');
+  colsCache_ = null;
 }
 
 /** Đổi ô HSD đang là chữ (nhập tay / dán từ Excel) thành ngày thật để tô màu được. */
@@ -221,10 +244,13 @@ function damBaoGia_(sheet) {
   if (n < 1) return;
   const c = cols_(sheet);
   const data = sheet.getRange(2, 1, n, c.max).getValues();
+  const keyOf = function (r) {
+    return unitKey_(String(r[c.BARCODE - 1]).trim(), String(r[c.NAME - 1]).trim(), c.LOAI && isLe_(r[c.LOAI - 1]));
+  };
   const known = {};
   data.forEach(function (r) {
     const p = cellToPrice_(r[c.PRICE - 1]);
-    const key = productKey_(String(r[c.BARCODE - 1]).trim(), String(r[c.NAME - 1]).trim());
+    const key = keyOf(r);
     if (p > 0 && !known[key]) known[key] = p;
   });
   const prices = data.map(function (r) { return [r[c.PRICE - 1]]; });
@@ -233,8 +259,7 @@ function damBaoGia_(sheet) {
     const v = prices[i][0];
     if (v === '' || v === null || (typeof v === 'number' && isValidPrice_(v))) continue;
     const p = cellToPrice_(v);
-    const key = productKey_(String(data[i][c.BARCODE - 1]).trim(), String(data[i][c.NAME - 1]).trim());
-    prices[i][0] = p > 0 || /^\s*0+\s*$/.test(String(v)) ? p : (known[key] || '');
+    prices[i][0] = p > 0 || /^\s*0+\s*$/.test(String(v)) ? p : (known[keyOf(data[i])] || '');
     changed = true;
   }
   if (changed) sheet.getRange(2, c.PRICE, n, 1).setNumberFormat(PRICE_FORMAT).setValues(prices);
@@ -276,27 +301,34 @@ function readRows_() {
       qty: Number(v[c.QTY - 1]) || 0,
       price: cellToPrice_(v[c.PRICE - 1]),
       id: String(v[c.ID - 1]).trim(),
+      le: c.LOAI ? isLe_(v[c.LOAI - 1]) : false,
     });
   }
   return rows;
 }
 
 function lotOf_(row) {
-  return { id: row.id, hsd: row.hsd, qty: row.qty };
+  return { id: row.id, hsd: row.hsd, qty: row.qty, le: row.le };
 }
 
 function byHsd_(a, b) {
   return (a.hsd || '9999').localeCompare(b.hsd || '9999');
 }
 
-/** Tên và giá của sản phẩm: lấy giá trị không rỗng đầu tiên. */
+/** Tên, giá lốc (price) và giá lẻ (priceLe) của sản phẩm: lấy giá trị không rỗng đầu tiên. */
 function productOf_(rows) {
-  let name = '', price = 0;
+  let name = '', price = 0, priceLe = 0;
   rows.forEach(function (r) {
     if (!name && r.name) name = r.name;
-    if (!price && r.price) price = r.price;
+    if (r.le) { if (!priceLe && r.price) priceLe = r.price; } else if (!price && r.price) price = r.price;
   });
-  return { barcode: rows[0].barcode, name: name, price: price };
+  return { barcode: rows[0].barcode, name: name, price: price, priceLe: priceLe };
+}
+
+/** Giá đang lưu của một loại (lốc / lẻ) trong các dòng của sản phẩm (0 nếu chưa có). */
+function priceOf_(rows, le) {
+  const hit = rows.filter(function (r) { return r.le === le && r.price; })[0];
+  return hit ? hit.price : 0;
 }
 
 function lookup_(barcode) {
@@ -308,7 +340,7 @@ function lookup_(barcode) {
 }
 
 function snapshot_() {
-  const rows = readRows_().map(function (r) { return [r.id, r.barcode, r.name, r.hsd, r.qty, r.price]; });
+  const rows = readRows_().map(function (r) { return [r.id, r.barcode, r.name, r.hsd, r.qty, r.price, r.le ? 1 : 0]; });
   return { ok: true, serverTime: new Date().toISOString(), rows: rows };
 }
 
@@ -316,9 +348,10 @@ function snapshot_() {
 
 /**
  * Ghi một sản phẩm với một hoặc nhiều date:
- *   {barcode?, name, price, lots: [{hsd, qty}], confirmMerge}
- * Date đã có → chưa xác nhận thì trả 'duplicate' cho date đó (không ghi), xác nhận thì cộng dồn.
- * Tên/giá khác bản đang lưu → cập nhật cho mọi date của sản phẩm (giá bán theo sản phẩm).
+ *   {barcode?, name, price, le?, lots: [{hsd, qty}], confirmMerge}
+ * le = true → hàng lẻ: dòng riêng, trùng date chỉ tính trong hàng lẻ, giá là giá lẻ.
+ * Date đã có (cùng loại) → chưa xác nhận thì trả 'duplicate' cho date đó (không ghi), xác nhận thì cộng dồn.
+ * Tên khác → cập nhật mọi dòng của sản phẩm (cả lốc và lẻ); giá khác → cập nhật mọi date cùng loại.
  * Giá trống / 0 → giữ giá đang lưu (không ghi đè thành 0); đổi giá về 0 thì dùng updateProduct.
  */
 function add_(b) {
@@ -336,13 +369,17 @@ function add_(b) {
   const sheet = getSheet_();
   const c = cols_(sheet);
   const rows = readRows_();
+  const le = !!b.le;
   const key = productKey_(barcode, name);
-  const same = rows.filter(function (r) { return productKey_(r.barcode, r.name) === key; });
-  const price = newPrice || (same.length ? productOf_(same).price : 0);
+  const all = rows.filter(function (r) { return productKey_(r.barcode, r.name) === key; });
+  const same = all.filter(function (r) { return r.le === le; });
+  const price = newPrice || priceOf_(all, le);
 
-  // Tên / giá theo sản phẩm: cập nhật mọi dòng cũ nếu khác.
-  same.forEach(function (r) {
+  // Tên theo sản phẩm (cả lốc và lẻ), giá theo loại: cập nhật các dòng cũ nếu khác.
+  all.forEach(function (r) {
     if (r.name !== name) sheet.getRange(r.r, c.NAME).setValue(name);
+  });
+  same.forEach(function (r) {
     if (r.price !== price) sheet.getRange(r.r, c.PRICE).setNumberFormat(PRICE_FORMAT).setValue(price);
   });
 
@@ -362,20 +399,25 @@ function add_(b) {
       results.push({ hsd: l.hsd, status: 'merged', newQty: dup.qty, id: dup.id });
       return;
     }
-    const id = newId_(seen);
-    seen[id] = true;
-    // Ghi từng ô vào đúng cột của nó — không đụng tới cột tự thêm (kể cả cột có công thức).
-    sheet.getRange(next, c.BARCODE).setNumberFormat('@').setValue(barcode);
-    sheet.getRange(next, c.NAME).setValue(name);
-    sheet.getRange(next, c.HSD).setNumberFormat('dd/MM/yyyy').setValue(isoToDate_(l.hsd));
-    sheet.getRange(next, c.QTY).setNumberFormat('0').setValue(l.qty);
-    sheet.getRange(next, c.PRICE).setNumberFormat(PRICE_FORMAT).setValue(price);
-    sheet.getRange(next, c.ID).setNumberFormat('@').setValue(id);
-    same.push({ r: next, barcode: barcode, name: name, hsd: l.hsd, qty: l.qty, price: price, id: id });
-    next++;
-    results.push({ hsd: l.hsd, status: 'created', id: id, newQty: l.qty });
+    const row = { r: next++, barcode: barcode, name: name, hsd: l.hsd, qty: l.qty, price: price, id: newId_(seen), le: le };
+    seen[row.id] = true;
+    appendRow_(sheet, row);
+    same.push(row);
+    results.push({ hsd: l.hsd, status: 'created', id: row.id, newQty: l.qty });
   });
   return { ok: true, results: results };
+}
+
+/** Ghi một dòng mới — từng ô vào đúng cột của nó, không đụng tới cột tự thêm (kể cả cột có công thức). */
+function appendRow_(sheet, row) {
+  const c = cols_(sheet);
+  sheet.getRange(row.r, c.BARCODE).setNumberFormat('@').setValue(row.barcode);
+  sheet.getRange(row.r, c.NAME).setValue(row.name);
+  sheet.getRange(row.r, c.HSD).setNumberFormat('dd/MM/yyyy').setValue(isoToDate_(row.hsd));
+  sheet.getRange(row.r, c.QTY).setNumberFormat('0').setValue(row.qty);
+  sheet.getRange(row.r, c.PRICE).setNumberFormat(PRICE_FORMAT).setValue(row.price);
+  sheet.getRange(row.r, c.ID).setNumberFormat('@').setValue(row.id);
+  if (row.le) sheet.getRange(row.r, c.LOAI).setValue(LE_TEXT);
 }
 
 /** Tìm dòng theo ID và kiểm tra giá trị app đã thấy. Trả {row, rows} hoặc {response} (conflict/notFound). */
@@ -415,9 +457,9 @@ function updateLot_(b) {
   const qty = b.qty != null && b.qty !== '' ? toQty_(b.qty, true) : row.qty;
 
   if (hsd !== row.hsd) {
-    const key = productKey_(row.barcode, row.name);
+    const key = unitKey_(row.barcode, row.name, row.le);
     const other = f.rows.filter(function (r) {
-      return r.id !== row.id && r.hsd === hsd && productKey_(r.barcode, r.name) === key;
+      return r.id !== row.id && r.hsd === hsd && unitKey_(r.barcode, r.name, r.le) === key;
     })[0];
     if (other) {
       if (!b.confirmMerge) return { ok: true, status: 'duplicate', currentQty: other.qty, id: other.id, hsd: other.hsd };
@@ -439,12 +481,17 @@ function deleteLot_(b) {
   return { ok: true, status: 'deleted' };
 }
 
-/** Sửa tên / giá cho mọi date của sản phẩm (có mã vạch: theo mã; không có: theo tên cũ). */
+/**
+ * Sửa tên (mọi dòng, cả lốc và lẻ) và giá cho sản phẩm (có mã vạch: theo mã; không có: theo tên cũ):
+ *   {barcode? | oldName, name, price?, priceLe?} — price = giá lốc, priceLe = giá lẻ; bỏ trống thì không đổi giá đó.
+ */
 function updateProduct_(b) {
   const barcode = normBarcode_(b.barcode);
   const name = String(b.name || '').trim();
   if (!name) throw new Error('Thiếu tên sản phẩm');
-  const price = toPrice_(b.price);
+  const prices = {};
+  if (b.price != null) prices.lot = toPrice_(b.price);
+  if (b.priceLe != null) prices.le = toPrice_(b.priceLe);
   const match = barcode
     ? function (r) { return normBarcode_(r.barcode) === barcode; }
     : function (r) { return !r.barcode && norm_(r.name) === norm_(b.oldName); };
@@ -454,9 +501,53 @@ function updateProduct_(b) {
   const c = cols_(sheet);
   rows.forEach(function (r) {
     sheet.getRange(r.r, c.NAME).setValue(name);
-    sheet.getRange(r.r, c.PRICE).setNumberFormat(PRICE_FORMAT).setValue(price);
+    const price = prices[r.le ? 'le' : 'lot'];
+    if (price != null) sheet.getRange(r.r, c.PRICE).setNumberFormat(PRICE_FORMAT).setValue(price);
   });
   return { ok: true, status: 'updated', rowsChanged: rows.length };
+}
+
+/**
+ * Mở lốc thành hàng lẻ: {id (dòng lốc), expect, perPack (số hộp / lốc), count? (số lốc, mặc định 1), priceLe?}
+ * Dòng lốc trừ `count`; dòng lẻ cùng date cộng `count × perPack` (chưa có thì tạo, giá = giá lẻ đang lưu hoặc priceLe).
+ */
+function openPack_(b) {
+  const f = findChecked_(b);
+  if (f.response) return f.response;
+  const row = f.row;
+  if (row.le) throw new Error('Dòng này đã là hàng lẻ');
+  const count = toQty_(b.count == null || b.count === '' ? 1 : b.count, false);
+  if (count > row.qty) throw new Error('Không đủ lốc để mở (đang có ' + row.qty + ')');
+  const perPack = Number(b.perPack);
+  if (!isFinite(perPack) || Math.floor(perPack) !== perPack || perPack < 1 || perPack > MAX_PER_PACK) {
+    throw new Error('Số hộp mỗi lốc không hợp lệ');
+  }
+  const newPriceLe = toPrice_(b.priceLe);
+
+  const sheet = getSheet_();
+  const c = cols_(sheet);
+  const key = unitKey_(row.barcode, row.name, true);
+  const leRows = f.rows.filter(function (r) { return unitKey_(r.barcode, r.name, r.le) === key; });
+  const priceLe = newPriceLe || priceOf_(leRows, true);
+  if (newPriceLe) {
+    leRows.forEach(function (r) {
+      if (r.price !== priceLe) sheet.getRange(r.r, c.PRICE).setNumberFormat(PRICE_FORMAT).setValue(priceLe);
+    });
+  }
+
+  const lotQty = row.qty - count;
+  sheet.getRange(row.r, c.QTY).setValue(lotQty);
+  const add = count * perPack;
+  const target = leRows.filter(function (r) { return r.hsd === row.hsd; })[0];
+  if (target) {
+    sheet.getRange(target.r, c.QTY).setValue(target.qty + add);
+    return { ok: true, status: 'opened', newQty: lotQty, leId: target.id, leQty: target.qty + add, created: false };
+  }
+  const seen = {};
+  f.rows.forEach(function (r) { seen[r.id] = true; });
+  const le = { r: sheet.getLastRow() + 1, barcode: row.barcode, name: row.name, hsd: row.hsd, qty: add, price: priceLe, id: newId_(seen), le: true };
+  appendRow_(sheet, le);
+  return { ok: true, status: 'opened', newQty: lotQty, leId: le.id, leQty: add, created: true };
 }
 
 // ---------------------------------------------------------------- Tiện ích
@@ -476,6 +567,17 @@ function normBarcode_(s) {
 function productKey_(barcode, name) {
   const b = normBarcode_(barcode);
   return b ? 'b:' + b : 'n:' + norm_(name);
+}
+
+/** Khoá theo loại: hàng lẻ và hàng lốc của cùng sản phẩm là hai nhóm date / giá riêng. */
+function unitKey_(barcode, name, le) {
+  return productKey_(barcode, name) + (le ? '|le' : '');
+}
+
+/** Ô cột "Loại": "Lẻ" (không phân biệt hoa thường, có dấu hay không) → hàng lẻ; còn lại → lốc. */
+function isLe_(v) {
+  const s = norm_(v);
+  return s === 'lẻ' || s === 'le';
 }
 
 function toQty_(v, allowZero) {

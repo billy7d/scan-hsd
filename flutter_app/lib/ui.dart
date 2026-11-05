@@ -223,7 +223,7 @@ class _ProductPickerState extends State<_ProductPicker> {
                     itemCount: list.length,
                     itemBuilder: (c, i) => ListTile(
                       title: Text(list[i].product.name),
-                      subtitle: Text('${formatPrice(list[i].product.price)} · tổng ${list[i].totalQty}'),
+                      subtitle: Text(list[i].summaryText),
                       onTap: () => Navigator.pop(context, list[i]),
                     ),
                   ),

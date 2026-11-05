@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'config.dart';
+import 'date_parser.dart';
 import 'models.dart';
 
 class ApiException implements Exception {
@@ -29,13 +30,19 @@ class WriteResult {
   final int? newQty;
   final int? rowsChanged;
 
+  /// Mở lốc: dòng lẻ nhận hàng và số lượng mới của nó.
+  final String? leId;
+  final int? leQty;
+
   WriteResult.fromJson(Map<String, dynamic> j)
       : status = j['status']?.toString() ?? '',
         id = j['id']?.toString(),
         hsd = j['hsd']?.toString(),
         currentQty = (j['currentQty'] as num?)?.toInt(),
         newQty = (j['newQty'] as num?)?.toInt(),
-        rowsChanged = (j['rowsChanged'] as num?)?.toInt();
+        rowsChanged = (j['rowsChanged'] as num?)?.toInt(),
+        leId = j['leId']?.toString(),
+        leQty = (j['leQty'] as num?)?.toInt();
 }
 
 /// Một date cần ghi.
@@ -108,9 +115,11 @@ class Api {
   static Future<LookupResult> lookup(String barcode) async {
     final j = await _get({'action': 'lookup', 'barcode': barcode});
     if (j['found'] != true) return const LookupResult(found: false);
+    final p = Map<String, dynamic>.from(j['product'] as Map);
     return LookupResult(
       found: true,
-      product: Product.fromJson(Map<String, dynamic>.from(j['product'] as Map)),
+      product: Product.fromJson(p),
+      priceLe: priceValue(p['priceLe']) ?? 0,
       lots: [for (final l in j['lots'] as List) Lot.fromJson(Map<String, dynamic>.from(l as Map))],
     );
   }
@@ -123,15 +132,17 @@ class Api {
   // ------------------------------------------------------------ Ghi
 
   /// Ghi một sản phẩm với nhiều date trong một lệnh. Kết quả theo thứ tự `lots`.
+  /// [le] = hàng lẻ: dòng riêng, [price] là giá lẻ.
   static Future<List<WriteResult>> add({
     required String barcode,
     required String name,
     required int price,
     required List<NewLot> lots,
+    bool le = false,
     bool confirmMerge = false,
   }) async {
     final j = await _post({
-      'action': 'add', 'barcode': barcode, 'name': name, 'price': price,
+      'action': 'add', 'barcode': barcode, 'name': name, 'price': price, 'le': le,
       'lots': [for (final l in lots) l.toJson()], 'confirmMerge': confirmMerge,
     });
     return [for (final r in j['results'] as List) WriteResult.fromJson(Map<String, dynamic>.from(r as Map))];
@@ -149,9 +160,19 @@ class Api {
   static Future<WriteResult> deleteLot(String id, Expect expect) async =>
       WriteResult.fromJson(_checked(await _post({'action': 'deleteLot', 'id': id, 'expect': expect.toJson()})));
 
-  /// Sửa tên / giá cho mọi date. Có mã vạch thì theo mã; không có thì theo tên cũ.
-  static Future<WriteResult> updateProduct(Product old, Product updated) async => WriteResult.fromJson(await _post({
+  /// Sửa tên (mọi date, cả lốc và lẻ), giá lốc ([Product.price]) và giá lẻ ([priceLe], null = không đổi).
+  /// Có mã vạch thì theo mã; không có thì theo tên cũ.
+  static Future<WriteResult> updateProduct(Product old, Product updated, {int? priceLe}) async =>
+      WriteResult.fromJson(await _post({
         'action': 'updateProduct', 'barcode': old.barcode, 'oldName': old.name,
-        'name': updated.name, 'price': updated.price,
+        'name': updated.name, 'price': updated.price, 'priceLe': ?priceLe,
       }));
+
+  /// Mở [count] lốc của dòng [id] thành hàng lẻ cùng date ([perPack] hộp / lốc).
+  /// [priceLe] > 0 → đặt giá lẻ (dùng khi sản phẩm chưa có giá lẻ).
+  static Future<WriteResult> openPack(String id, Expect expect, {required int perPack, int count = 1, int priceLe = 0}) async =>
+      WriteResult.fromJson(_checked(await _post({
+        'action': 'openPack', 'id': id, 'expect': expect.toJson(),
+        'perPack': perPack, 'count': count, 'priceLe': priceLe,
+      })));
 }

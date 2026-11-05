@@ -3,7 +3,10 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'config.dart';
 import 'entry_screen.dart';
+import 'date_parser.dart';
 import 'inventory_cache.dart';
+import 'invoice.dart';
+import 'invoice_screen.dart';
 import 'lookup_screen.dart';
 import 'scanner_screen.dart';
 import 'ui.dart';
@@ -13,6 +16,8 @@ Future<void> main() async {
   final cache = InventoryCache.instance;
   await cache.load(); // hiện ngay dữ liệu đã lưu trên máy
   cache.refresh().catchError((_) {}); // rồi tải bản mới từ sheet ở phía sau
+  await InvoiceStore.instance.load(); // hoá đơn tạm trên máy (bỏ hoá đơn tự tạo đã quá 30 phút)
+  InvoiceStore.instance.startAutoPurge();
   runApp(const KhoAnDamApp());
 }
 
@@ -67,7 +72,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _cache.refreshIfStale().catchError((_) {});
+    if (state == AppLifecycleState.resumed) {
+      _cache.refreshIfStale().catchError((_) {});
+      InvoiceStore.instance.purgeExpired();
+    }
   }
 
   void _open(Widget page) => Navigator.push(context, MaterialPageRoute(builder: (_) => page));
@@ -111,6 +119,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
             ]),
+            const SizedBox(height: 12),
+            const _InvoiceButton(),
             const SizedBox(height: 16),
             InkWell(
               borderRadius: BorderRadius.circular(28),
@@ -213,4 +223,44 @@ class _CountCard extends StatelessWidget {
           ),
         ),
       );
+}
+
+/// Nút HOÁ ĐƠN: hiện hoá đơn tự tạo đang mở (số SP, tổng) nếu có.
+class _InvoiceButton extends StatelessWidget {
+  const _InvoiceButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final store = InvoiceStore.instance;
+    return ListenableBuilder(
+      listenable: store,
+      builder: (context, _) {
+        final auto = store.activeAuto;
+        final count = store.invoices.length;
+        return FilledButton.tonal(
+          style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(72),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          ),
+          onPressed: () => openInvoices(context),
+          child: Row(children: [
+            const Icon(Icons.receipt_long, size: 36),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                const Text('HOÁ ĐƠN', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                Text(
+                  auto != null
+                      ? 'Đang gom: ${auto.totalQty} SP · ${formatPrice(auto.subtotal)}'
+                      : (count > 0 ? '$count hoá đơn chưa xuất' : 'Xuất hoá đơn / tạo thủ công'),
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ]),
+            ),
+            if (count > 0) Badge(label: Text('$count')),
+          ]),
+        );
+      },
+    );
+  }
 }

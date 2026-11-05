@@ -8,18 +8,37 @@ import 'package:path_provider/path_provider.dart';
 
 import 'api.dart';
 import 'config.dart';
+import 'date_parser.dart';
 import 'models.dart';
 import 'text_fold.dart';
 
-/// Một sản phẩm và mọi date của nó, date gần hết hạn nhất trước.
+/// Một sản phẩm và mọi date của nó (cả hàng lốc và hàng lẻ), date gần hết hạn nhất trước.
+/// `product.price` = giá lốc, [priceLe] = giá lẻ.
 class ProductSummary {
   final Product product;
+  final int priceLe;
   final List<InventoryRow> rows;
-  ProductSummary(this.product, List<InventoryRow> rows)
+  ProductSummary(this.product, List<InventoryRow> rows, {this.priceLe = 0})
       : rows = (rows.toList()..sort((a, b) => (a.hsd.isEmpty ? '9999' : a.hsd).compareTo(b.hsd.isEmpty ? '9999' : b.hsd)));
 
   String get key => product.key;
-  int get totalQty => rows.fold(0, (s, r) => s + r.qty);
+  List<InventoryRow> get lotRows => rows.where((r) => !r.le).toList();
+  List<InventoryRow> get leRows => rows.where((r) => r.le).toList();
+  bool get hasLe => rows.any((r) => r.le);
+  int priceFor(bool le) => le ? priceLe : product.price;
+
+  /// Tổng hàng lốc (hàng lẻ tính riêng ở [totalLe]).
+  int get totalQty => lotRows.fold(0, (s, r) => s + r.qty);
+  int get totalLe => leRows.fold(0, (s, r) => s + r.qty);
+
+  /// Một dòng tóm tắt giá + tổng: "140.000 ₫ · tổng 3", có hàng lẻ thì "Lốc 140.000 ₫ · 3 | Lẻ 40.000 ₫ · 8".
+  String get summaryText {
+    if (!hasLe) return '${formatPrice(product.price)} · tổng $totalQty';
+    return [
+      if (lotRows.isNotEmpty) 'Lốc ${formatPrice(product.price)} · $totalQty',
+      'Lẻ ${formatPrice(priceLe)} · $totalLe',
+    ].join(' | ');
+  }
 
   /// Date còn hàng gần hết hạn nhất (không có thì date đầu tiên).
   InventoryRow? get nearest => rows.where((r) => r.qty > 0).firstOrNull ?? rows.firstOrNull;
@@ -61,15 +80,17 @@ class InventoryCache extends ChangeNotifier {
     for (final r in _rows) {
       groups.putIfAbsent(r.product.key, () => []).add(r);
     }
+    int price(Iterable<InventoryRow> rs) => rs.map((r) => r.product.price).firstWhere((p) => p > 0, orElse: () => 0);
     _products = [
       for (final g in groups.values)
         ProductSummary(
           Product(
             barcode: g.first.product.barcode,
             name: g.map((r) => r.product.name).firstWhere((n) => n.isNotEmpty, orElse: () => ''),
-            price: g.map((r) => r.product.price).firstWhere((p) => p > 0, orElse: () => 0),
+            price: price(g.where((r) => !r.le)),
           ),
           g,
+          priceLe: price(g.where((r) => r.le)),
         ),
     ];
     notifyListeners();
@@ -134,10 +155,19 @@ class InventoryCache extends ChangeNotifier {
     bool mine(InventoryRow r) => normBarcode(r.product.barcode) == code;
     final old = _rows.where(mine).toList();
     final fresh = res.found
-        ? [for (final l in res.lots) InventoryRow(id: l.id, product: res.product!, hsd: l.hsd, qty: l.qty)]
+        ? [
+            for (final l in res.lots)
+              InventoryRow(
+                id: l.id,
+                product: Product(barcode: res.product!.barcode, name: res.product!.name, price: l.le ? res.priceLe : res.product!.price),
+                hsd: l.hsd,
+                qty: l.qty,
+                le: l.le,
+              ),
+          ]
         : <InventoryRow>[];
     String sig(List<InventoryRow> rs) =>
-        (rs.map((r) => '${r.id}|${r.hsd}|${r.qty}|${r.product.name}|${r.product.price}').toList()..sort()).join(';');
+        (rs.map((r) => '${r.id}|${r.hsd}|${r.qty}|${r.le}|${r.product.name}|${r.product.price}').toList()..sort()).join(';');
     if (sig(old) == sig(fresh)) return false;
     _rows = [..._rows.where((r) => !mine(r)), ...fresh];
     _rebuild();
@@ -215,6 +245,41 @@ class InventoryCache extends ChangeNotifier {
 
   /// Sản phẩm không có mã vạch — để chọn khi nhập hàng không mã.
   List<ProductSummary> get withoutBarcode => _sortedByName(_products.where((p) => p.product.barcode.isEmpty));
+}
+
+// ---------------------------------------------------------------- Số hộp mỗi lốc (nhớ trên máy)
+
+/// Số hộp / lốc đã dùng lần trước khi mở lốc, theo khoá sản phẩm — để điền sẵn lần sau.
+class PackSizes {
+  PackSizes({Future<File> Function()? fileProvider}) : _fileProvider = fileProvider ?? _defaultFile;
+  static final PackSizes instance = PackSizes();
+
+  final Future<File> Function() _fileProvider;
+  Map<String, int>? _map;
+
+  static Future<File> _defaultFile() async => File('${(await getApplicationDocumentsDirectory()).path}/pack_sizes.json');
+
+  Future<Map<String, int>> _load() async {
+    if (_map != null) return _map!;
+    try {
+      final f = await _fileProvider();
+      final j = await f.exists() ? jsonDecode(await f.readAsString()) as Map<String, dynamic> : const <String, dynamic>{};
+      _map = {for (final e in j.entries) if (e.value is int) e.key: e.value as int};
+    } catch (_) {
+      _map = {};
+    }
+    return _map!;
+  }
+
+  Future<int?> get(String productKey) async => (await _load())[productKey];
+
+  Future<void> set(String productKey, int n) async {
+    final m = await _load();
+    m[productKey] = n;
+    try {
+      await (await _fileProvider()).writeAsString(jsonEncode(m));
+    } catch (_) {}
+  }
 }
 
 // ---------------------------------------------------------------- Tìm tên gần đúng

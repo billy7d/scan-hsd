@@ -28,14 +28,17 @@ Sheet `TonKho`, 6 cột **tìm theo tên tiêu đề ở dòng 1** (không theo 
 
 Giá bán (2026-11-05): số nguyên 0..10.000.000 ₫ (`MAX_PRICE` trong Code.gs = `maxPrice` trong `date_parser.dart`). Sheet cũ từng có ID 8 ký tự nằm trong cột giá (vd. `9a0649ba`, `59970494`, `2.6E+58`) → đọc ra 0; `damBaoGia_` (chạy cùng `damBaoId_` trước mỗi lệnh ghi/snapshot) tự sửa ô rác: lấy giá date khác cùng sản phẩm, không có thì để trống; chữ "140.000" → số. `add` với giá trống/0 **giữ giá đang lưu**; đặt giá 0 thì dùng `updateProduct`. Giá sai / > max → lỗi, không ghi.
 
-API (mọi request kèm `key`; ghi bọc `LockService`; mọi lệnh ghi gọi `damBaoId_` trước):
-- `GET ?action=lookup&barcode=` → `{found, product:{barcode,name,price}, lots:[{id,hsd,qty}]}`
-- `GET ?action=snapshot` → `{rows:[[id, barcode, name, hsd, qty, price]]}`
-- `POST add {barcode?, name, price, lots:[{hsd,qty}], confirmMerge}` → `{results:[{hsd, status: created|duplicate|merged, id, currentQty?, newQty?}]}`; tên/giá khác bản đang lưu → cập nhật mọi date của sản phẩm.
+Hàng lẻ (tách lốc, 2026-11-05): cột tuỳ chọn **"Loại"** (`LOAI_HEADER`, `damBaoCotLoai_` tự thêm vào cuối trước mỗi lệnh ghi/snapshot) — ghi `Lẻ` cho hàng lẻ, trống = nguyên lốc (dữ liệu cũ đều là lốc). Hàng lẻ là dòng riêng, chung mã + tên với hàng lốc; trùng date và giá tính theo `unitKey_` (sản phẩm + loại). Tên sửa cho cả hai loại, giá theo từng loại. App gộp lốc + lẻ của một mã vào một `ProductSummary` (`lotRows`/`leRows`, `priceLe`, `totalLe`); số hộp / lốc khi mở lốc nhớ trên máy (`PackSizes`, `pack_sizes.json`), không lưu vào sheet.
+
+API (mọi request kèm `key`; ghi bọc `LockService`; mọi lệnh ghi gọi `damBaoCotLoai_`, `damBaoId_`, `damBaoGia_` trước):
+- `GET ?action=lookup&barcode=` → `{found, product:{barcode,name,price,priceLe}, lots:[{id,hsd,qty,le}]}` (price = giá lốc)
+- `GET ?action=snapshot` → `{rows:[[id, barcode, name, hsd, qty, price, le(0/1)]]}`
+- `POST add {barcode?, name, price, le?, lots:[{hsd,qty}], confirmMerge}` → `{results:[{hsd, status: created|duplicate|merged, id, currentQty?, newQty?}]}`; tên khác → cập nhật mọi dòng của sản phẩm; giá khác → mọi date cùng loại.
 - `POST adjust {id, expect:{barcode,hsd,qty}, delta}` → `updated|conflict|notFound`
 - `POST updateLot {id, expect, hsd?, qty?, confirmMerge}` → `updated|duplicate|merged|conflict|notFound`
 - `POST deleteLot {id, expect}` → `deleted|conflict|notFound`
-- `POST updateProduct {barcode? | oldName, name, price}` → `updated (rowsChanged)|notFound`
+- `POST updateProduct {barcode? | oldName, name, price?, priceLe?}` → `updated (rowsChanged)|notFound` (giá bỏ trống = không đổi)
+- `POST openPack {id (dòng lốc), expect, perPack, count?=1, priceLe?}` → `{status: opened, newQty (lốc), leId, leQty, created}`|`conflict|notFound`; trừ lốc, cộng `count×perPack` vào dòng lẻ cùng date (chưa có thì tạo).
 
 App giữ bản sao sheet trên máy (`inventory_cache.dart`, file JSON) → đọc/tìm tức thì; làm mới khi mở app, kéo xuống, sau khi ghi, hoặc cũ > 10 phút; đọc theo mã luôn hỏi lại sheet ngầm.
 
@@ -46,11 +49,14 @@ Môi trường Windows: Flutter 3.47.7 tại `D:\dev\flutter`, Android SDK `D:\d
 | File | Nội dung |
 |---|---|
 | `apps_script/Code.gs` | Bản 6 cột, vị trí cột đọc từ tiêu đề (`cols_()`); thiếu tiêu đề → báo lỗi. Ghi từng ô vào đúng cột, không đụng cột tự thêm. `caiDat()` thêm tiêu đề còn thiếu vào cuối, bảo vệ + ẩn cột ID, tô màu ≤ 90 ngày. |
-| `apps_script/test/code_gs.test.js` | 20 test Node giả lập SpreadsheetApp (`node apps_script/test/code_gs.test.js`), gồm đổi thứ tự cột, thiếu tiêu đề, giá rác / giá dạng chữ. |
-| `flutter_app/lib/main.dart` | Màn chính: 2 nút lớn GHI / ĐỌC, ô tìm theo tên, đếm ≤ 90 ngày / hết hạn, ghi hàng không mã. |
+| `apps_script/test/code_gs.test.js` | 30 test Node giả lập SpreadsheetApp (`node apps_script/test/code_gs.test.js`), gồm đổi thứ tự cột, thiếu tiêu đề, giá rác / giá dạng chữ, hàng lẻ / mở lốc. |
+| `flutter_app/lib/main.dart` | Màn chính: 2 nút lớn GHI / ĐỌC, nút HOÁ ĐƠN, ô tìm theo tên, đếm ≤ 90 ngày / hết hạn, ghi hàng không mã. |
 | `lib/scanner_screen.dart` | Quét + công tắc Ghi/Đọc + `scanLoop()` quét liên tục. |
 | `lib/entry_screen.dart` | GHI: tên, giá, nhiều dòng date + số lượng, hỏi cộng dồn (trước khi gửi và khi sheet báo trùng). |
-| `lib/lookup_screen.dart` | ĐỌC: `SearchScreen`, `ProductScreen`, `LotCard` (−/+ gom lệnh), sửa date/tên/giá, xoá date. |
+| `lib/lookup_screen.dart` | ĐỌC: `SearchScreen`, `ProductScreen` (phần Nguyên lốc / Hàng lẻ), `LotCard` (−/+ gom lệnh; trừ thành công → `InvoiceStore.recordAdjust`), mở lốc, sửa date/tên/giá lốc/giá lẻ, xoá date. |
+| `lib/invoice.dart` | Hoá đơn tạm trên máy (`invoices.json`), không đụng sheet. Hoá đơn tự tạo gom các lần trừ ở ĐỌC theo sản phẩm + loại (+ lại kho thì giảm dòng); hết hạn 30 phút kể từ lần trừ / sửa cuối (`InvoiceStore.ttl`), đang mở sửa/xem trước thì `hold`. Hoá đơn thủ công không tự xoá. Xuất ảnh xong → xoá hoá đơn. |
+| `lib/invoice_screen.dart` | HOÁ ĐƠN: danh sách, sửa (khách, dòng: thêm từ kho / nhập tay, ship), xem trước, lưu ảnh PNG vào Thư viện (`gal`; iOS `NSPhotoLibraryAddUsageDescription`, Android `WRITE_EXTERNAL_STORAGE` ≤ API 29). |
+| `lib/invoice_view.dart` | Mẫu ảnh "HOÁ ĐƠN TẠM TÍNH" rộng 400 (xuất ×3): tên shop `Đồ ăn dặm -  Trà Phương 🍼`, `0816 950 666`, tiêu đề (không in giờ), khách, bảng kẻ nét liền (Sản phẩm/SL/Đơn giá/T.tiền), Tổng, Phí ship, Tổng hoá đơn — mọi chữ màu đen. Không QR / STK / lời cảm ơn (theo yêu cầu). Giờ bấm Xuất chỉ dùng đặt tên file ảnh. |
 | `lib/inventory_cache.dart` | Bản sao sheet, `search()` (tên gần đúng `nameMatchScore`, mã/đuôi mã), lọc HSD. |
 | `lib/api.dart`, `models.dart`, `date_parser.dart` (định dạng ngày/giá), `text_fold.dart`, `ui.dart`, `config.dart` (gitignore; mẫu `config.example.dart`). |
 | `tool/live_test.dart` | Thử ghi thật lên sheet rồi dọn sạch: `dart run tool/live_test.dart` (cần Code.gs mới đã Deploy). |

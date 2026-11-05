@@ -33,6 +33,7 @@ class MockRange {
   }
   setValue(v) { return this.setValues([[v]]); }
   setNumberFormat() { return this; }
+  setFontWeight() { return this; }
 }
 
 class MockSheet {
@@ -49,6 +50,8 @@ class MockSheet {
       return m;
     }, 0);
   }
+  getMaxColumns() { return Math.max(26, this.getLastColumn()); }
+  insertColumnAfter() {}
   getRange(r, c, nr = 1, nc = 1) { return new MockRange(this, r, c, nr, nc); }
   deleteRow(r) { this.data.splice(r - 1, 1); }
 }
@@ -196,12 +199,12 @@ test('updateProduct đổi tên + giá cho mọi date; hàng không mã theo tê
   assert.strictEqual(post({ action: 'updateProduct', barcode: '', oldName: 'bánh gạo', name: 'Bánh gạo vị táo', price: 2 }).rowsChanged, 1);
 });
 
-test('snapshot: [id, mã, tên, date, số lượng, giá]; điền ID thiếu, sinh lại ID trùng', () => {
+test('snapshot: [id, mã, tên, date, số lượng, giá, lẻ]; điền ID thiếu, sinh lại ID trùng', () => {
   const rows = [['111', 'A', '31/01/2027', 1, 10, 'aaaaaaaa'], ['222', 'B', '', 2, 20, 'aaaaaaaa'], ['', 'C', '', 3, 0, '']];
   const { get } = setup(rows);
   const out = get({ action: 'snapshot' });
   assert.strictEqual(out.rows[0][3], '2027-01-31');
-  assert.deepStrictEqual(out.rows[0].slice(1), ['111', 'A', '2027-01-31', 1, 10]);
+  assert.deepStrictEqual(out.rows[0].slice(1), ['111', 'A', '2027-01-31', 1, 10, 0]);
   assert.strictEqual(new Set(out.rows.map((r) => r[0])).size, 3);
 });
 
@@ -211,7 +214,7 @@ test('cột tìm theo tiêu đề: đổi thứ tự, chèn cột tự thêm →
   const ctx = makeContext(sheet);
   const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify({ key: ctx.KEY, ...body }) } }).content);
   const get = (params) => JSON.parse(ctx.doGet({ parameter: { key: ctx.KEY, ...params } }).content);
-  assert.deepStrictEqual(get({ action: 'snapshot' }).rows[0], ['aaaaaaaa', '111', 'A', '2027-01-31', 1, 10]);
+  assert.deepStrictEqual(get({ action: 'snapshot' }).rows[0], ['aaaaaaaa', '111', 'A', '2027-01-31', 1, 10, 0]);
   post({ action: 'add', ...P, lots: [{ hsd: '2027-03-15', qty: 3 }] });
   const r = sheet.data[2];
   assert.strictEqual(r[5], P.barcode);
@@ -291,6 +294,120 @@ test('giá app gửi: số / "140.000" / "140,000 ₫" đều ra 140000; sai ho�
   post({ action: 'add', ...P, lots: [{ hsd: '2027-03-15', qty: 1 }] });
   assert.strictEqual(post({ action: 'updateProduct', barcode: P.barcode, name: P.name, price: 99999999 }).ok, false);
   assert.strictEqual(sheet.data[1][4], 140000);
+});
+
+// ---------------------------------------------------------------- Hàng lẻ (tách lốc)
+
+const LOAI = 6; // cột G — "Loại" tự thêm sau 6 cột gốc
+
+test('cột "Loại" tự thêm vào cuối ở lần ghi đầu; hàng cũ không ghi gì = lốc', () => {
+  const { sheet, post } = setup([['111', 'A', '31/01/2027', 1, 90000, 'aaaaaaa1']]);
+  post({ action: 'add', barcode: '111', name: 'A', price: 0, lots: [{ hsd: '2027-02-28', qty: 1 }] });
+  assert.strictEqual(sheet.data[0][LOAI], 'Loại');
+  assert.ok(sheet.data.slice(1).every((r) => !r[LOAI]));
+});
+
+test('ghi hàng lẻ: dòng riêng ghi "Lẻ", cùng date với lốc không bị coi là trùng, giá lẻ riêng', () => {
+  const { sheet, post, get } = setup();
+  post({ action: 'add', ...P, lots: [{ hsd: '2027-03-15', qty: 2 }] });
+  const r = post({ action: 'add', ...P, le: true, price: 40000, lots: [{ hsd: '2027-03-15', qty: 3 }] });
+  assert.strictEqual(r.results[0].status, 'created');
+  assert.strictEqual(sheet.getLastRow(), 3);
+  assert.deepStrictEqual(sheet.data.slice(1).map((x) => [x[3], x[4], x[LOAI] || '']), [[2, 140000, ''], [3, 40000, 'Lẻ']]);
+  const l = get({ action: 'lookup', barcode: P.barcode });
+  assert.strictEqual(l.product.price, 140000);
+  assert.strictEqual(l.product.priceLe, 40000);
+  assert.deepStrictEqual(l.lots.map((x) => [x.qty, x.le]), [[2, false], [3, true]]);
+  assert.deepStrictEqual(get({ action: 'snapshot' }).rows.map((x) => [x[4], x[5], x[6]]), [[2, 140000, 0], [3, 40000, 1]]);
+});
+
+test('hàng lẻ trùng date lẻ → hỏi cộng dồn; giá lẻ đổi không đụng giá lốc; bỏ trống giá lẻ → giữ', () => {
+  const { sheet, post } = setup();
+  post({ action: 'add', ...P, lots: [{ hsd: '2027-03-15', qty: 2 }] });
+  post({ action: 'add', ...P, le: true, price: 40000, lots: [{ hsd: '2027-03-15', qty: 3 }] });
+  const d = post({ action: 'add', ...P, le: true, price: 45000, lots: [{ hsd: '2027-03-15', qty: 1 }] });
+  assert.strictEqual(d.results[0].status, 'duplicate');
+  assert.strictEqual(d.results[0].currentQty, 3);
+  assert.deepStrictEqual(sheet.data.slice(1).map((x) => x[4]), [140000, 45000]);
+  post({ action: 'add', ...P, le: true, price: 0, lots: [{ hsd: '2027-06-30', qty: 4 }] });
+  assert.deepStrictEqual(sheet.data.slice(1).map((x) => x[4]), [140000, 45000, 45000]);
+  post({ action: 'add', ...P, price: 0, lots: [{ hsd: '2027-07-31', qty: 1 }] });
+  assert.deepStrictEqual(sheet.data.slice(1).map((x) => x[4]), [140000, 45000, 45000, 140000]);
+});
+
+test('sản phẩm chỉ bán lẻ: tra cứu ra giá lẻ, giá lốc 0; đổi tên áp dụng cả lốc và lẻ', () => {
+  const { sheet, post, get } = setup();
+  post({ action: 'add', ...P, le: true, price: 40000, lots: [{ hsd: '2027-03-15', qty: 3 }] });
+  const l = get({ action: 'lookup', barcode: P.barcode });
+  assert.deepStrictEqual([l.product.price, l.product.priceLe], [0, 40000]);
+  post({ action: 'add', ...P, name: 'Tên mới', lots: [{ hsd: '2027-03-15', qty: 1 }] });
+  assert.ok(sheet.data.slice(1).every((x) => x[1] === 'Tên mới'));
+});
+
+test('updateProduct: price = giá lốc, priceLe = giá lẻ, bỏ trống thì giữ', () => {
+  const { sheet, post } = setup();
+  post({ action: 'add', ...P, lots: [{ hsd: '2027-03-15', qty: 2 }] });
+  post({ action: 'add', ...P, le: true, price: 40000, lots: [{ hsd: '2027-03-15', qty: 3 }] });
+  assert.strictEqual(post({ action: 'updateProduct', barcode: P.barcode, name: 'X', priceLe: 42000 }).rowsChanged, 2);
+  assert.deepStrictEqual(sheet.data.slice(1).map((x) => [x[1], x[4]]), [['X', 140000], ['X', 42000]]);
+  post({ action: 'updateProduct', barcode: P.barcode, name: 'X', price: 150000 });
+  assert.deepStrictEqual(sheet.data.slice(1).map((x) => x[4]), [150000, 42000]);
+});
+
+test('updateLot hàng lẻ đổi sang date đang có ở lốc → không trùng (khác loại)', () => {
+  const { post } = setup();
+  post({ action: 'add', ...P, lots: [{ hsd: '2027-06-15', qty: 2 }] });
+  const id = post({ action: 'add', ...P, le: true, lots: [{ hsd: '2027-03-15', qty: 3 }] }).results[0].id;
+  const r = post({ action: 'updateLot', id, expect: { barcode: P.barcode, hsd: '2027-03-15', qty: 3 }, hsd: '2027-06-15' });
+  assert.strictEqual(r.status, 'updated');
+});
+
+test('mở lốc: trừ lốc, cộng lẻ cùng date (tạo dòng lẻ mới, giá lẻ nhập lúc mở)', () => {
+  const { sheet, post, get } = setup();
+  const id = post({ action: 'add', ...P, lots: [{ hsd: '2027-03-15', qty: 3 }] }).results[0].id;
+  const expect = { barcode: P.barcode, hsd: '2027-03-15', qty: 3 };
+  const r = post({ action: 'openPack', id, expect, perPack: 4, priceLe: '40.000' });
+  assert.deepStrictEqual([r.status, r.newQty, r.leQty, r.created], ['opened', 2, 4, true]);
+  assert.deepStrictEqual(sheet.data.slice(1).map((x) => [x[2].getDate(), x[3], x[4], x[LOAI] || '']), [[15, 2, 140000, ''], [15, 4, 40000, 'Lẻ']]);
+  assert.strictEqual(get({ action: 'lookup', barcode: P.barcode }).lots.find((l) => l.le).id, r.leId);
+});
+
+test('mở lốc lần nữa / mở nhiều lốc: cộng vào dòng lẻ cùng date, giữ giá lẻ', () => {
+  const { sheet, post } = setup();
+  const id = post({ action: 'add', ...P, lots: [{ hsd: '2027-03-15', qty: 5 }] }).results[0].id;
+  post({ action: 'add', ...P, le: true, price: 40000, lots: [{ hsd: '2027-03-15', qty: 1 }] });
+  const r1 = post({ action: 'openPack', id, expect: { barcode: P.barcode, hsd: '2027-03-15', qty: 5 }, perPack: 4 });
+  assert.deepStrictEqual([r1.newQty, r1.leQty, r1.created], [4, 5, false]);
+  const r2 = post({ action: 'openPack', id, expect: { barcode: P.barcode, hsd: '2027-03-15', qty: 4 }, perPack: 6, count: 2 });
+  assert.deepStrictEqual([r2.newQty, r2.leQty], [2, 17]);
+  assert.strictEqual(sheet.getLastRow(), 3);
+  assert.deepStrictEqual(sheet.data.slice(1).map((x) => x[4]), [140000, 40000]);
+});
+
+test('mở lốc: thiếu lốc / số hộp sai / dòng lẻ / dữ liệu đã đổi → không ghi gì', () => {
+  const { sheet, post } = setup();
+  const id = post({ action: 'add', ...P, lots: [{ hsd: '2027-03-15', qty: 1 }] }).results[0].id;
+  const leId = post({ action: 'add', ...P, le: true, lots: [{ hsd: '2027-03-15', qty: 1 }] }).results[0].id;
+  const expect = { barcode: P.barcode, hsd: '2027-03-15', qty: 1 };
+  const before = JSON.stringify(sheet.data);
+  assert.strictEqual(post({ action: 'openPack', id, expect, perPack: 4, count: 2 }).ok, false);
+  for (const perPack of [0, -1, 2.5, 'abc', 1001, undefined]) assert.strictEqual(post({ action: 'openPack', id, expect, perPack }).ok, false);
+  assert.strictEqual(post({ action: 'openPack', id: leId, expect, perPack: 4 }).ok, false);
+  assert.strictEqual(post({ action: 'openPack', id, expect: { ...expect, qty: 5 }, perPack: 4 }).status, 'conflict');
+  assert.strictEqual(JSON.stringify(sheet.data), before);
+});
+
+test('tự sửa giá rác: giá lấy từ date cùng loại (lẻ lấy giá lẻ, không lấy giá lốc)', () => {
+  const H = [...HEADER, 'Loại'];
+  const sheet = new MockSheet([H,
+    ['111', 'A', '31/01/2027', 1, 140000, 'aaaaaaa1', ''],
+    ['111', 'A', '28/02/2027', 1, '9a0649ba', 'aaaaaaa2', ''],
+    ['111', 'A', '31/01/2027', 4, 40000, 'aaaaaaa3', 'Lẻ'],
+    ['111', 'A', '28/02/2027', 4, '5c7f1194', 'aaaaaaa4', 'lẻ'],
+  ]);
+  const ctx = makeContext(sheet);
+  JSON.parse(ctx.doGet({ parameter: { key: ctx.KEY, action: 'snapshot' } }).content);
+  assert.deepStrictEqual(sheet.data.slice(1).map((r) => r[4]), [140000, 140000, 40000, 40000]);
 });
 
 test('dữ liệu sai → lỗi rõ ràng', () => {

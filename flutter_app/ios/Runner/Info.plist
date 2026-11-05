@@ -28,6 +28,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Dùng camera để quét mã vạch sản phẩm</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Lưu ảnh hoá đơn vào thư viện ảnh</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Lưu ảnh hoá đơn vào thư viện ảnh</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

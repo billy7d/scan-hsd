@@ -39,12 +39,15 @@ int? priceValue(dynamic v) {
 }
 
 /// 140000 → "140.000 ₫".
-String formatPrice(int vnd) {
-  final s = vnd.toString();
-  final b = StringBuffer();
+String formatPrice(int vnd) => '${formatNumber(vnd)} ₫';
+
+/// 140000 → "140.000" (dấu chấm hàng nghìn).
+String formatNumber(int n) {
+  final s = n.abs().toString();
+  final b = StringBuffer(n < 0 ? '-' : '');
   for (var i = 0; i < s.length; i++) {
     if (i > 0 && (s.length - i) % 3 == 0) b.write('.');
     b.write(s[i]);
   }
-  return '$b ₫';
+  return b.toString();
 }

@@ -32,39 +32,47 @@ class Lot {
   final String id;
   final String hsd; // yyyy-MM-dd
   final int qty;
-  const Lot({required this.id, required this.hsd, required this.qty});
+  final bool le;
+  const Lot({required this.id, required this.hsd, required this.qty, this.le = false});
 
-  factory Lot.fromJson(Map<String, dynamic> j) => Lot(id: _s(j['id']), hsd: _s(j['hsd']), qty: _i(j['qty']));
+  factory Lot.fromJson(Map<String, dynamic> j) =>
+      Lot(id: _s(j['id']), hsd: _s(j['hsd']), qty: _i(j['qty']), le: _b(j['le']));
 }
 
-/// Một dòng của sheet `TonKho`: một date của một sản phẩm.
+/// Một dòng của sheet `TonKho`: một date của một sản phẩm, hàng lốc hoặc hàng lẻ ([le]).
+/// `product.price` là giá của đúng loại đó (giá lốc / giá lẻ).
 class InventoryRow {
   final String id;
   final Product product;
   final String hsd;
   final int qty;
+  final bool le;
 
-  const InventoryRow({required this.id, required this.product, required this.hsd, required this.qty});
+  const InventoryRow({required this.id, required this.product, required this.hsd, required this.qty, this.le = false});
 
-  /// Dạng mảng của `snapshot`: [id, barcode, name, hsd, qty, price].
+  /// Dạng mảng của `snapshot`: [id, barcode, name, hsd, qty, price, le (0/1)].
   factory InventoryRow.fromList(List<dynamic> r) => InventoryRow(
         id: _s(r[0]),
         product: Product(barcode: _s(r[1]), name: _s(r[2]), price: r.length > 5 ? priceValue(r[5]) ?? 0 : 0),
         hsd: _s(r[3]),
         qty: _i(r[4]),
+        le: r.length > 6 && _b(r[6]),
       );
 
-  List<dynamic> toList() => [id, product.barcode, product.name, hsd, qty, product.price];
+  List<dynamic> toList() => [id, product.barcode, product.name, hsd, qty, product.price, le ? 1 : 0];
 
   InventoryRow copyWith({Product? product, String? hsd, int? qty}) =>
-      InventoryRow(id: id, product: product ?? this.product, hsd: hsd ?? this.hsd, qty: qty ?? this.qty);
+      InventoryRow(id: id, product: product ?? this.product, hsd: hsd ?? this.hsd, qty: qty ?? this.qty, le: le);
 }
 
 class LookupResult {
   final bool found;
+
+  /// `product.price` = giá lốc; [priceLe] = giá lẻ.
   final Product? product;
+  final int priceLe;
   final List<Lot> lots;
-  const LookupResult({required this.found, this.product, this.lots = const []});
+  const LookupResult({required this.found, this.product, this.priceLe = 0, this.lots = const []});
 }
 
 /// Giá trị app đã thấy, gửi kèm lệnh sửa để server phát hiện xung đột.
@@ -95,4 +103,5 @@ ExpiryStatus expiryStatus(String hsd, DateTime now) {
 }
 
 String _s(dynamic v) => v == null ? '' : v.toString().trim();
+bool _b(dynamic v) => v == true || v == 1 || v == '1' || v == 'true';
 int _i(dynamic v) => v is num ? v.toInt() : int.tryParse(_s(v).replaceAll(RegExp(r'[^\d-]'), '')) ?? 0;

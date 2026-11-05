@@ -10,6 +10,7 @@ import 'api.dart';
 import 'date_parser.dart';
 import 'entry_screen.dart';
 import 'inventory_cache.dart';
+import 'invoice.dart';
 import 'models.dart';
 import 'scanner_screen.dart';
 import 'ui.dart';
@@ -114,7 +115,7 @@ class _SummaryTile extends StatelessWidget {
       tileColor: n != null && n.qty > 0 ? expiryColor(expiryStatus(n.hsd, now)) : null,
       title: Text(s.product.name, style: const TextStyle(fontWeight: FontWeight.w600)),
       subtitle: Text([
-        '${formatPrice(s.product.price)} · tổng ${s.totalQty} · ${s.rows.length} date',
+        '${s.summaryText} · ${s.rows.length} date',
         if (n != null) 'Gần nhất ${formatIsoVn(n.hsd)} (${daysLeftText(n.hsd, now)})',
       ].join('\n')),
       isThreeLine: true,
@@ -183,11 +184,13 @@ class _ProductScreenState extends State<ProductScreen> {
     if (mounted && _barcode.isNotEmpty) await _revalidate();
   }
 
-  Future<void> _editProduct(Product p) async {
-    final updated = await showDialog<Product>(context: context, builder: (_) => _ProductEditDialog(product: p));
-    if (updated == null || !mounted) return;
+  Future<void> _editProduct(ProductSummary s) async {
+    final p = s.product;
+    final out = await showDialog<(Product, int?)>(context: context, builder: (_) => _ProductEditDialog(summary: s));
+    if (out == null || !mounted) return;
+    final (updated, priceLe) = out;
     try {
-      final res = await runWithProgress(context, 'Đang lưu…', () => Api.updateProduct(p, updated));
+      final res = await runWithProgress(context, 'Đang lưu…', () => Api.updateProduct(p, updated, priceLe: priceLe));
       if (res.status == 'notFound') throw ConflictException('notFound');
       if (p.barcode.isEmpty) setState(() => _key = updated.key);
       await _cache.refresh();
@@ -215,7 +218,7 @@ class _ProductScreenState extends State<ProductScreen> {
                   child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
                 ),
               if (s != null)
-                IconButton(tooltip: 'Sửa tên / giá', icon: const Icon(Icons.edit), onPressed: () => _editProduct(s.product)),
+                IconButton(tooltip: 'Sửa tên / giá', icon: const Icon(Icons.edit), onPressed: () => _editProduct(s)),
             ],
           ),
           body: s == null ? _empty() : _detail(s),
@@ -224,12 +227,26 @@ class _ProductScreenState extends State<ProductScreen> {
               : SafeArea(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
-                    child: FilledButton.icon(
-                      style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-                      icon: const Icon(Icons.add),
-                      label: const Text('Ghi thêm date'),
-                      onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EntryScreen(preset: s.product))),
-                    ),
+                    child: Row(children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Ghi thêm lốc'),
+                          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => EntryScreen(preset: s.product))),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton.tonalIcon(
+                          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Ghi thêm lẻ'),
+                          onPressed: () =>
+                              Navigator.push(context, MaterialPageRoute(builder: (_) => EntryScreen(preset: s.product, le: true))),
+                        ),
+                      ),
+                    ]),
                   ),
                 ),
         );
@@ -300,20 +317,42 @@ class _ProductScreenState extends State<ProductScreen> {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(p.name, style: t.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
-              Row(children: [
-                Expanded(child: _Stat(label: 'Giá bán', value: formatPrice(p.price))),
-                Expanded(child: _Stat(label: 'Tổng số lượng', value: '${s.totalQty}')),
-                Expanded(child: _Stat(label: 'Số date', value: '${s.rows.length}')),
-              ]),
+              if (!s.hasLe)
+                Row(children: [
+                  Expanded(child: _Stat(label: 'Giá bán', value: formatPrice(p.price))),
+                  Expanded(child: _Stat(label: 'Tổng số lượng', value: '${s.totalQty}')),
+                  Expanded(child: _Stat(label: 'Số date', value: '${s.rows.length}')),
+                ])
+              else ...[
+                Row(children: [
+                  Expanded(child: _Stat(label: 'Giá lốc', value: formatPrice(p.price))),
+                  Expanded(child: _Stat(label: 'Tổng lốc', value: '${s.totalQty}')),
+                  Expanded(child: _Stat(label: 'Date lốc', value: '${s.lotRows.length}')),
+                ]),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(child: _Stat(label: 'Giá lẻ', value: formatPrice(s.priceLe))),
+                  Expanded(child: _Stat(label: 'Tổng lẻ', value: '${s.totalLe}')),
+                  Expanded(child: _Stat(label: 'Date lẻ', value: '${s.leRows.length}')),
+                ]),
+              ],
               const SizedBox(height: 6),
               Text(p.barcode.isEmpty ? 'Không có mã vạch' : 'Mã vạch: ${p.barcode}', style: t.bodySmall),
             ]),
           ),
         ),
-        const SizedBox(height: 8),
-        Text('Các date (gần hết hạn nhất trước)', style: t.titleMedium),
-        const SizedBox(height: 4),
-        for (final r in s.rows) LotCard(key: ValueKey(r.id), row: r, now: now, onConflict: onConflict),
+        if (s.lotRows.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(s.hasLe ? 'Nguyên lốc (gần hết hạn nhất trước)' : 'Các date (gần hết hạn nhất trước)', style: t.titleMedium),
+          const SizedBox(height: 4),
+          for (final r in s.lotRows) LotCard(key: ValueKey(r.id), row: r, now: now, onConflict: onConflict),
+        ],
+        if (s.hasLe) ...[
+          const SizedBox(height: 12),
+          Text('Hàng lẻ (gần hết hạn nhất trước)', style: t.titleMedium),
+          const SizedBox(height: 4),
+          for (final r in s.leRows) LotCard(key: ValueKey(r.id), row: r, now: now, onConflict: onConflict),
+        ],
         const Align(alignment: Alignment.centerRight, child: SyncStatus()),
       ]),
     );
@@ -375,7 +414,7 @@ class _LotCardState extends State<LotCard> {
   }
 
   Future<void> _setExact() async {
-    final v = await askNumber(context, 'Số lượng date ${formatIsoVn(r.hsd)}', _shown);
+    final v = await askNumber(context, 'Số lượng${r.le ? ' lẻ' : ''} date ${formatIsoVn(r.hsd)}', _shown);
     if (v != null) _change(v - _shown);
   }
 
@@ -393,6 +432,7 @@ class _LotCardState extends State<LotCard> {
     try {
       final res = await Api.adjust(row.id, Expect(row.product.barcode, row.hsd, row.qty), delta);
       _cache.patchRow(row.id, (x) => x.copyWith(qty: res.newQty));
+      InvoiceStore.instance.recordAdjust(row, delta); // bán → vào hoá đơn tạm
       if (silent || !mounted) return;
       setState(() => _sending = 0);
       if (_pending != 0) {
@@ -428,6 +468,46 @@ class _LotCardState extends State<LotCard> {
     try {
       await Api.deleteLot(r.id, Expect(r.product.barcode, r.hsd, r.qty));
       _cache.removeRow(r.id);
+    } on ConflictException {
+      if (mounted) await widget.onConflict();
+    } on ApiException catch (e) {
+      if (mounted) showSnack(context, e.toString(), error: true);
+    }
+  }
+
+  /// Mở lốc: trừ lốc, cộng hàng lẻ cùng date.
+  Future<void> _openPack() async {
+    if (_pending != 0 || _sending != 0) return showSnack(context, 'Đợi lưu xong số lượng rồi mở lốc');
+    final s = _cache.byKey(r.product.key);
+    final remembered = await PackSizes.instance.get(r.product.key);
+    if (!mounted) return;
+    final input = await showDialog<_OpenPackInput>(
+      context: context,
+      builder: (_) => _OpenPackDialog(row: r, perPack: remembered, priceLe: s?.priceLe ?? 0),
+    );
+    if (input == null || !mounted) return;
+    final expect = Expect(r.product.barcode, r.hsd, r.qty);
+    try {
+      final res = await runWithProgress(context, 'Đang mở lốc…',
+          () => Api.openPack(r.id, expect, perPack: input.perPack, count: input.count, priceLe: input.priceLe));
+      PackSizes.instance.set(r.product.key, input.perPack);
+      _cache.patchRow(r.id, (x) => x.copyWith(qty: res.newQty));
+      if (_cache.rows.any((x) => x.id == res.leId)) {
+        _cache.patchRow(res.leId!, (x) => x.copyWith(qty: res.leQty));
+      } else {
+        final priceLe = input.priceLe > 0 ? input.priceLe : s?.priceLe ?? 0;
+        _cache.addRows([
+          InventoryRow(
+            id: res.leId!,
+            product: Product(barcode: r.product.barcode, name: r.product.name, price: priceLe),
+            hsd: r.hsd,
+            qty: res.leQty!,
+            le: true,
+          ),
+        ]);
+      }
+      if (mounted) showSnack(context, 'Đã mở ${input.count} lốc → +${input.count * input.perPack} lẻ (date ${formatIsoVn(r.hsd)})');
+      _cache.refresh().catchError((_) {});
     } on ConflictException {
       if (mounted) await widget.onConflict();
     } on ApiException catch (e) {
@@ -484,7 +564,7 @@ class _LotCardState extends State<LotCard> {
           Row(children: [
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Date ${formatIsoVn(r.hsd)}', style: t.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                Text('${r.le ? 'Lẻ · ' : ''}Date ${formatIsoVn(r.hsd)}', style: t.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                 Text(daysLeftText(r.hsd, widget.now)),
               ]),
             ),
@@ -500,10 +580,11 @@ class _LotCardState extends State<LotCard> {
               ),
             ),
             PopupMenuButton<String>(
-              onSelected: (v) => v == 'date' ? _editDate() : _delete(),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'date', child: Text('Sửa date')),
-                PopupMenuItem(value: 'delete', child: Text('Xoá date này')),
+              onSelected: (v) => switch (v) { 'open' => _openPack(), 'date' => _editDate(), _ => _delete() },
+              itemBuilder: (_) => [
+                if (!r.le && _shown > 0) const PopupMenuItem(value: 'open', child: Text('Mở lốc → bán lẻ')),
+                const PopupMenuItem(value: 'date', child: Text('Sửa date')),
+                const PopupMenuItem(value: 'delete', child: Text('Xoá date này')),
               ],
             ),
           ]),
@@ -517,22 +598,28 @@ class _LotCardState extends State<LotCard> {
 
 // ================================================================ Sửa tên / giá
 
+/// Trả (sản phẩm mới, giá lẻ mới — null nếu sản phẩm chưa có hàng lẻ).
 class _ProductEditDialog extends StatefulWidget {
-  final Product product;
-  const _ProductEditDialog({required this.product});
+  final ProductSummary summary;
+  const _ProductEditDialog({required this.summary});
   @override
   State<_ProductEditDialog> createState() => _ProductEditDialogState();
 }
 
+String _priceText(int p) => p > 0 ? formatPrice(p).replaceAll(' ₫', '') : '';
+
 class _ProductEditDialogState extends State<_ProductEditDialog> {
-  late final _name = TextEditingController(text: widget.product.name);
-  late final _price =
-      TextEditingController(text: widget.product.price > 0 ? formatPrice(widget.product.price).replaceAll(' ₫', '') : '');
+  Product get _p => widget.summary.product;
+  bool get _hasLe => widget.summary.hasLe;
+  late final _name = TextEditingController(text: _p.name);
+  late final _price = TextEditingController(text: _priceText(_p.price));
+  late final _priceLe = TextEditingController(text: _priceText(widget.summary.priceLe));
 
   @override
   void dispose() {
     _name.dispose();
     _price.dispose();
+    _priceLe.dispose();
     super.dispose();
   }
 
@@ -548,21 +635,125 @@ class _ProductEditDialogState extends State<_ProductEditDialog> {
             controller: _price,
             keyboardType: TextInputType.number,
             inputFormatters: [PriceInputFormatter()],
-            decoration: const InputDecoration(labelText: 'Giá bán', suffixText: '₫'),
+            decoration: InputDecoration(labelText: _hasLe ? 'Giá bán lốc' : 'Giá bán', suffixText: '₫'),
           ),
+          if (_hasLe) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _priceLe,
+              keyboardType: TextInputType.number,
+              inputFormatters: [PriceInputFormatter()],
+              decoration: const InputDecoration(labelText: 'Giá bán lẻ (1 hộp)', suffixText: '₫'),
+            ),
+          ],
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Huỷ')),
           FilledButton(
             onPressed: () {
               if (_name.text.trim().isEmpty) return;
-              Navigator.pop(
-                context,
-                Product(barcode: widget.product.barcode, name: _name.text.trim(), price: parsePrice(_price.text)),
-              );
+              Navigator.pop(context, (
+                Product(barcode: _p.barcode, name: _name.text.trim(), price: parsePrice(_price.text)),
+                _hasLe ? parsePrice(_priceLe.text) : null,
+              ));
             },
             child: const Text('Lưu'),
           ),
         ],
       );
+}
+
+// ================================================================ Mở lốc
+
+class _OpenPackInput {
+  final int count;
+  final int perPack;
+  final int priceLe;
+  const _OpenPackInput(this.count, this.perPack, this.priceLe);
+}
+
+/// Hỏi số lốc mở, số hộp mỗi lốc (điền sẵn số lần trước) và giá lẻ (điền sẵn giá đang lưu).
+class _OpenPackDialog extends StatefulWidget {
+  final InventoryRow row;
+  final int? perPack;
+  final int priceLe;
+  const _OpenPackDialog({required this.row, required this.perPack, required this.priceLe});
+  @override
+  State<_OpenPackDialog> createState() => _OpenPackDialogState();
+}
+
+class _OpenPackDialogState extends State<_OpenPackDialog> {
+  int _count = 1;
+  late final _perPack = TextEditingController(text: widget.perPack?.toString() ?? '');
+  late final _priceLe = TextEditingController(text: _priceText(widget.priceLe));
+  bool _tried = false;
+
+  int? get _per {
+    final n = int.tryParse(_perPack.text.trim());
+    return n != null && n >= 1 && n <= 1000 ? n : null;
+  }
+
+  @override
+  void dispose() {
+    _perPack.dispose();
+    _priceLe.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = widget.row;
+    final per = _per;
+    return AlertDialog(
+      title: const Text('Mở lốc → bán lẻ'),
+      content: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Date ${formatIsoVn(r.hsd)} · đang có ${r.qty} lốc'),
+          const SizedBox(height: 12),
+          Row(children: [
+            const Expanded(child: Text('Số lốc mở')),
+            QtyStepper(value: _count, onChanged: (v) => setState(() => _count = v.clamp(1, r.qty))),
+          ]),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _perPack,
+            autofocus: widget.perPack == null,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: '1 lốc = mấy hộp?',
+              errorText: _tried && per == null ? 'Nhập số hộp (1–1000)' : null,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _priceLe,
+            keyboardType: TextInputType.number,
+            inputFormatters: [PriceInputFormatter()],
+            decoration: InputDecoration(
+              labelText: 'Giá bán lẻ (1 hộp)',
+              suffixText: '₫',
+              helperText: widget.priceLe > 0 ? 'Đổi giá → áp dụng mọi date hàng lẻ' : 'Chưa có giá lẻ — nhập một lần',
+            ),
+          ),
+          if (per != null) ...[
+            const SizedBox(height: 12),
+            Text('Lốc: ${r.qty} → ${r.qty - _count}  ·  Lẻ: +${_count * per}',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+          ],
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Huỷ')),
+        FilledButton(
+          onPressed: () {
+            if (per == null) return setState(() => _tried = true);
+            Navigator.pop(context, _OpenPackInput(_count, per, parsePrice(_priceLe.text)));
+          },
+          child: const Text('Mở lốc'),
+        ),
+      ],
+    );
+  }
 }

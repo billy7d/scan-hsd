@@ -2,7 +2,10 @@
     <!-- Ghi/đọc Google Sheet và tra Open Food Facts (bản release cần khai báo). -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- Lưu ảnh hoá đơn vào thư viện (gal): Android ≤ 10 cần quyền ghi bộ nhớ. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
     <application
+        android:requestLegacyExternalStorage="true"
         android:label="Kho ăn dặm"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">

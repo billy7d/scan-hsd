@@ -1,4 +1,5 @@
 // GHI — nhập hàng: một sản phẩm (mã vạch hoặc không mã) với một hoặc nhiều date trong một lần lưu.
+// Chọn "Nguyên lốc" hoặc "Lẻ": hàng lẻ là các dòng riêng (date, số lượng, giá riêng), chung mã và tên.
 // Trả `true` qua Navigator.pop khi lưu thành công để vòng lặp quét tiếp.
 
 import 'package:flutter/material.dart';
@@ -20,7 +21,10 @@ class EntryScreen extends StatefulWidget {
 
   /// Sản phẩm chọn sẵn (từ màn tra cứu, "Ghi thêm date").
   final Product? preset;
-  const EntryScreen({super.key, this.barcode, this.preset});
+
+  /// Mở sẵn ở chế độ ghi hàng lẻ.
+  final bool le;
+  const EntryScreen({super.key, this.barcode, this.preset, this.le = false});
 
   @override
   State<EntryScreen> createState() => _EntryScreenState();
@@ -37,6 +41,7 @@ class _EntryScreenState extends State<EntryScreen> {
   bool _loading = false;
   bool _saving = false;
   bool _tried = false;
+  late bool _le = widget.le;
 
   /// Đổi được khi người dùng chọn sản phẩm có mã gần giống (mã vừa quét bị đọc lệch).
   late String _barcode = (widget.barcode ?? widget.preset?.barcode ?? '').trim();
@@ -59,7 +64,22 @@ class _EntryScreenState extends State<EntryScreen> {
   void _fill(Product p) {
     _known = p;
     _name.text = p.name;
-    _price.text = p.price > 0 ? formatPrice(p.price).replaceAll(' ₫', '') : '';
+    _setPrice(_knownPrice);
+  }
+
+  void _setPrice(int p) => _price.text = p > 0 ? formatPrice(p).replaceAll(' ₫', '') : '';
+
+  ProductSummary? get _summary => _known == null ? null : _cache.byKey(_known!.key);
+
+  /// Giá đang lưu của loại đang chọn (lốc / lẻ).
+  int get _knownPrice => _summary?.priceFor(_le) ?? (_le ? 0 : _known?.price ?? 0);
+
+  void _setType(bool le) {
+    if (le == _le) return;
+    setState(() {
+      _le = le;
+      _setPrice(_knownPrice);
+    });
   }
 
   /// Hỏi sheet về đúng mã này (dữ liệu trên máy có thể cũ).
@@ -83,9 +103,7 @@ class _EntryScreenState extends State<EntryScreen> {
     final hit = _cache.byKey(productKey('', v));
     setState(() {
       _known = hit?.product;
-      if (hit != null && _price.text.trim().isEmpty && hit.product.price > 0) {
-        _price.text = formatPrice(hit.product.price).replaceAll(' ₫', '');
-      }
+      if (hit != null && _price.text.trim().isEmpty) _setPrice(_knownPrice);
     });
   }
 
@@ -103,7 +121,8 @@ class _EntryScreenState extends State<EntryScreen> {
     if (p != null) setState(() => _fill(p.product));
   }
 
-  List<InventoryRow> get _existing => _known == null ? const [] : (_cache.byKey(_known!.key)?.rows ?? const []);
+  /// Các date đang có của loại đang chọn (lốc / lẻ).
+  List<InventoryRow> get _existing => [for (final r in _summary?.rows ?? const <InventoryRow>[]) if (r.le == _le) r];
 
   // ------------------------------------------------------------ Lưu
 
@@ -121,7 +140,8 @@ class _EntryScreenState extends State<EntryScreen> {
     final lots = [for (final e in byDate.entries) NewLot(e.key, e.value)];
     final price = parsePrice(_price.text);
     final key = productKey(_barcode, name);
-    final existing = _cache.byKey(key)?.rows ?? const <InventoryRow>[];
+    final existing = [for (final r in _cache.byKey(key)?.rows ?? const <InventoryRow>[]) if (r.le == _le) r];
+    final kind = _le ? ' lẻ' : '';
 
     // Date đã có → hỏi cộng dồn trước khi gửi.
     final dups = [for (final l in lots) if (existing.any((r) => r.hsd == l.hsd)) l];
@@ -129,7 +149,7 @@ class _EntryScreenState extends State<EntryScreen> {
     if (dups.isNotEmpty) {
       merge = await confirmDialog(
         context,
-        'Date đã có trong kho',
+        'Date$kind đã có trong kho',
         dups.map((l) => '• ${formatIsoVn(l.hsd)}: đang có ${existing.firstWhere((r) => r.hsd == l.hsd).qty} → cộng thêm ${l.qty}').join('\n'),
         confirm: 'Cộng dồn',
       );
@@ -139,24 +159,24 @@ class _EntryScreenState extends State<EntryScreen> {
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      var results = await Api.add(barcode: _barcode, name: name, price: price, lots: lots, confirmMerge: merge);
+      var results = await Api.add(barcode: _barcode, name: name, price: price, le: _le, lots: lots, confirmMerge: merge);
       // Sheet có date trùng mà máy chưa biết (dữ liệu cũ) → hỏi rồi gửi lại riêng các date đó.
       final late = [for (var i = 0; i < results.length; i++) if (results[i].status == 'duplicate') i];
       if (late.isNotEmpty && mounted) {
         final ok = await confirmDialog(
           context,
-          'Date đã có trong kho',
+          'Date$kind đã có trong kho',
           late.map((i) => '• ${formatIsoVn(lots[i].hsd)}: đang có ${results[i].currentQty} → cộng thêm ${lots[i].qty}').join('\n'),
           confirm: 'Cộng dồn',
         );
         if (ok) {
           final again = await Api.add(
-              barcode: _barcode, name: name, price: price, lots: [for (final i in late) lots[i]], confirmMerge: true);
+              barcode: _barcode, name: name, price: price, le: _le, lots: [for (final i in late) lots[i]], confirmMerge: true);
           results = [...results.where((r) => r.status != 'duplicate'), ...again];
         }
       }
       final saved = results.where((r) => r.status == 'created' || r.status == 'merged').length;
-      messenger.showSnackBar(SnackBar(behavior: SnackBarBehavior.floating, content: Text('Đã lưu $saved date — $name')));
+      messenger.showSnackBar(SnackBar(behavior: SnackBarBehavior.floating, content: Text('Đã lưu $saved date$kind — $name')));
       _cache.refresh().catchError((_) {});
       if (mounted) Navigator.pop(context, true);
     } on ApiException catch (e) {
@@ -172,9 +192,9 @@ class _EntryScreenState extends State<EntryScreen> {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final changedProduct = _known != null &&
-        (normKey(_name.text) != normKey(_known!.name) || parsePrice(_price.text) != _known!.price) &&
-        _existing.isNotEmpty;
+    final price = parsePrice(_price.text);
+    final changedName = _known != null && normKey(_name.text) != normKey(_known!.name) && (_summary?.rows.isNotEmpty ?? false);
+    final changedPrice = price > 0 && price != _knownPrice && _existing.isNotEmpty;
     return Scaffold(
       appBar: AppBar(title: Text(_barcode.isEmpty ? 'Ghi hàng không mã vạch' : 'Ghi · $_barcode')),
       body: _loading
@@ -193,18 +213,42 @@ class _EntryScreenState extends State<EntryScreen> {
                 ),
               ),
               const SizedBox(height: 12),
+              SegmentedButton<bool>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: false, icon: Icon(Icons.inventory_2), label: Text('Nguyên lốc')),
+                  ButtonSegment(value: true, icon: Icon(Icons.scatter_plot), label: Text('Lẻ (tách lốc)')),
+                ],
+                selected: {_le},
+                onSelectionChanged: (s) => _setType(s.first),
+              ),
+              if (_le)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text('Hàng lẻ ghi thành dòng riêng: date, số lượng, giá riêng — chung mã và tên với hàng lốc.',
+                      style: t.bodySmall),
+                ),
+              const SizedBox(height: 12),
               TextField(
                 controller: _price,
                 keyboardType: TextInputType.number,
                 inputFormatters: [PriceInputFormatter()],
                 onChanged: (_) => setState(() {}),
                 style: t.titleMedium,
-                decoration: const InputDecoration(labelText: 'Giá bán', suffixText: '₫'),
+                decoration: InputDecoration(
+                  labelText: _le ? 'Giá bán lẻ (1 hộp)' : 'Giá bán',
+                  suffixText: '₫',
+                  helperText: _knownPrice > 0 ? 'Để trống = giữ giá đang lưu ${formatPrice(_knownPrice)}' : null,
+                ),
               ),
-              if (changedProduct)
+              if (changedName || changedPrice)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text('Tên/giá mới sẽ áp dụng cho mọi date của sản phẩm này.',
+                  child: Text(
+                      [
+                        if (changedName) 'Tên mới áp dụng cho mọi date (cả lốc và lẻ).',
+                        if (changedPrice) 'Giá mới áp dụng cho mọi date ${_le ? 'hàng lẻ' : 'hàng lốc'}.',
+                      ].join(' '),
                       style: t.bodySmall?.copyWith(color: Theme.of(context).colorScheme.primary)),
                 ),
               if (_existing.isNotEmpty) ...[const SizedBox(height: 16), _existingCard()],
@@ -230,7 +274,7 @@ class _EntryScreenState extends State<EntryScreen> {
                   icon: _saving
                       ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.save),
-                  label: Text(_saving ? 'Đang lưu…' : 'Lưu (${_dates.length} date)'),
+                  label: Text(_saving ? 'Đang lưu…' : 'Lưu (${_dates.length} date${_le ? ' lẻ' : ''})'),
                   onPressed: _saving ? null : _save,
                 ),
               ),
@@ -244,7 +288,12 @@ class _EntryScreenState extends State<EntryScreen> {
           decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
           child: Row(children: [Icon(icon), const SizedBox(width: 10), Expanded(child: Text(text))]),
         );
-    if (_known != null) return box(Colors.green.shade100, Icons.check_circle, 'Sản phẩm đã có — tên và giá đã điền sẵn');
+    if (_known != null) {
+      if (_le && _knownPrice == 0) {
+        return box(Colors.green.shade100, Icons.check_circle, 'Sản phẩm đã có — chưa có giá lẻ, nhập giá 1 hộp một lần');
+      }
+      return box(Colors.green.shade100, Icons.check_circle, 'Sản phẩm đã có — tên và giá đã điền sẵn');
+    }
     if (_barcode.isNotEmpty) {
       final similar = _cache.similarBarcodes(_barcode);
       if (similar.isEmpty) return box(Colors.amber.shade100, Icons.fiber_new, 'Mã vạch mới — nhập tên và giá một lần');
@@ -276,7 +325,7 @@ class _EntryScreenState extends State<EntryScreen> {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Đang có trong kho', style: Theme.of(context).textTheme.titleSmall),
+          Text(_le ? 'Hàng lẻ đang có' : 'Đang có trong kho', style: Theme.of(context).textTheme.titleSmall),
           for (final r in _existing)
             Container(
               margin: const EdgeInsets.only(top: 4),
