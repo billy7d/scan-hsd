@@ -456,13 +456,20 @@ class _LotCardState extends State<LotCard> {
   }
 
   Future<void> _askDeleteEmpty() async {
-    final del = await confirmDialog(context, 'Hết date này', 'Date ${formatIsoVn(r.hsd)} còn 0. Xoá dòng này khỏi sheet?',
-        confirm: 'Xoá', cancel: 'Giữ lại');
+    final message = _deleteMessage('Date ${formatIsoVn(r.hsd)} còn 0. Xoá dòng này khỏi sheet?',
+        keepHint: '\n\nChọn "Giữ lại" để vẫn hiện trong danh sách với số lượng 0.');
+    final del = await confirmDialog(context, 'Hết date này', message, confirm: 'Xoá', cancel: 'Giữ lại');
     if (del && mounted) await _delete(ask: false);
   }
 
+  /// Câu hỏi xoá, thêm cảnh báo nếu [r] là date cuối cùng của sản phẩm hoặc của loại (lốc / lẻ).
+  String _deleteMessage(String question, {String keepHint = ''}) {
+    final warning = _cache.byKey(r.product.key)?.lastDateWarning(r);
+    return warning == null ? question : '$question\n\n$warning$keepHint';
+  }
+
   Future<void> _delete({bool ask = true}) async {
-    if (ask && !await confirmDialog(context, 'Xoá date', 'Xoá date ${formatIsoVn(r.hsd)} (${r.qty}) khỏi sheet?', confirm: 'Xoá')) {
+    if (ask && !await confirmDialog(context, 'Xoá date', _deleteMessage('Xoá date ${formatIsoVn(r.hsd)} (${r.qty}) khỏi sheet?'), confirm: 'Xoá')) {
       return;
     }
     try {

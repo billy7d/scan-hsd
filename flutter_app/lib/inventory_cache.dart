@@ -42,6 +42,21 @@ class ProductSummary {
 
   /// Date còn hàng gần hết hạn nhất (không có thì date đầu tiên).
   InventoryRow? get nearest => rows.where((r) => r.qty > 0).firstOrNull ?? rows.firstOrNull;
+
+  /// Cảnh báo trước khi xoá [r] nếu đó là date cuối cùng của sản phẩm hoặc của loại (lốc / lẻ);
+  /// còn date khác cùng loại thì null.
+  String? lastDateWarning(InventoryRow r) {
+    final others = rows.where((x) => x.id != r.id);
+    if (others.isEmpty) {
+      return 'Đây là date cuối cùng của sản phẩm: xoá thì sản phẩm mất khỏi sheet và Dsach tồn kho, '
+          'lần nhập sau phải nhập lại tên và giá.';
+    }
+    if (others.every((x) => x.le != r.le)) {
+      final loai = r.le ? 'hàng lẻ' : 'hàng lốc';
+      return 'Đây là date cuối cùng của $loai: xoá thì dòng $loai mất khỏi Dsach tồn kho.';
+    }
+    return null;
+  }
 }
 
 enum ExpiryFilter { all, near, expired }
