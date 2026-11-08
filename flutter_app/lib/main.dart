@@ -27,17 +27,16 @@ class KhoAnDamApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final base = ThemeData(
-      useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2E7D32)),
-      inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder()),
-    );
     return MaterialApp(
       title: 'Kho ăn dặm',
       debugShowCheckedModeBanner: false,
       // Màu date (đỏ nhạt / vàng) giống sheet nên giữ giao diện sáng.
       themeMode: ThemeMode.light,
-      theme: base.copyWith(textTheme: base.textTheme.apply(fontSizeFactor: 1.08)),
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2E7D32)),
+        inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder()),
+      ),
       locale: const Locale('vi'),
       supportedLocales: const [Locale('vi'), Locale('en')],
       localizationsDelegates: const [
