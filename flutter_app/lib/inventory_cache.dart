@@ -46,6 +46,18 @@ class ProductSummary {
 
 enum ExpiryFilter { all, near, expired }
 
+/// Một dòng của "Dsach tồn kho": tổng số lượng mọi date của một sản phẩm.
+/// Hàng lốc và hàng lẻ là hai dòng riêng vì khác đơn vị (không cộng 1 lốc với 1 hộp lẻ).
+class StockLine {
+  final String key;
+  final String name;
+  final bool le;
+  final int qty;
+  const StockLine({required this.key, required this.name, required this.le, required this.qty});
+
+  String get label => le ? '$name (Lẻ)' : name;
+}
+
 class InventoryCache extends ChangeNotifier {
   static final InventoryCache instance = InventoryCache();
 
@@ -245,6 +257,29 @@ class InventoryCache extends ChangeNotifier {
 
   /// Sản phẩm không có mã vạch — để chọn khi nhập hàng không mã.
   List<ProductSummary> get withoutBarcode => _sortedByName(_products.where((p) => p.product.barcode.isEmpty));
+
+  /// Danh sách tồn kho: số lượng từ thấp đến cao (hết hàng đứng đầu), bằng nhau thì theo tên
+  /// (không phân biệt dấu, hoa thường); cùng tên thì lốc trước lẻ.
+  List<StockLine> stockList() {
+    final lines = [
+      for (final p in _products) ...[
+        if (p.lotRows.isNotEmpty) StockLine(key: p.key, name: _stockName(p), le: false, qty: p.totalQty),
+        if (p.hasLe) StockLine(key: p.key, name: _stockName(p), le: true, qty: p.totalLe),
+      ],
+    ];
+    int compare(StockLine a, StockLine b) {
+      if (a.qty != b.qty) return a.qty.compareTo(b.qty);
+      final byName = foldText(a.name).compareTo(foldText(b.name));
+      if (byName != 0) return byName;
+      if (a.le != b.le) return a.le ? 1 : -1;
+      return a.key.compareTo(b.key);
+    }
+
+    return lines..sort(compare);
+  }
+
+  /// Dòng trong sheet chỉ có mã, chưa có tên → hiện mã để vẫn nhận ra được.
+  String _stockName(ProductSummary p) => p.product.name.isNotEmpty ? p.product.name : 'Mã ${p.product.barcode}';
 }
 
 // ---------------------------------------------------------------- Số hộp mỗi lốc (nhớ trên máy)

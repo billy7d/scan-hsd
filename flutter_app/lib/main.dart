@@ -9,6 +9,7 @@ import 'invoice.dart';
 import 'invoice_screen.dart';
 import 'lookup_screen.dart';
 import 'scanner_screen.dart';
+import 'stock_list_screen.dart';
 import 'ui.dart';
 
 Future<void> main() async {
@@ -168,6 +169,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               icon: const Icon(Icons.list),
               label: Text('Tất cả sản phẩm (${_cache.products.length})'),
               onPressed: () => _open(const SearchScreen()),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+              icon: const Icon(Icons.format_list_numbered),
+              label: const Text('Dsach tồn kho'),
+              onPressed: () => _open(const StockListScreen()),
             ),
           ]);
         },
