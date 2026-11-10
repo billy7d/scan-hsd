@@ -76,6 +76,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   ButtonSegment(value: ExpiryFilter.all, label: Text('Tất cả')),
                   ButtonSegment(value: ExpiryFilter.near, label: Text('≤ 90 ngày')),
                   ButtonSegment(value: ExpiryFilter.expired, label: Text('Hết hạn')),
+                  ButtonSegment(value: ExpiryFilter.outOfStock, label: Text('SL = 0')),
                 ],
                 selected: {_filter},
                 onSelectionChanged: (s) => setState(() => _filter = s.first),
@@ -111,15 +112,20 @@ class _SummaryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final n = s.nearest;
+    final out = s.isOutOfStock;
     return ListTile(
-      tileColor: n != null && n.qty > 0 ? expiryColor(expiryStatus(n.hsd, now)) : null,
-      title: Text(s.product.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text([
-        '${s.summaryText} · ${s.rows.length} date',
-        if (n != null) 'Gần nhất ${formatIsoVn(n.hsd)} (${daysLeftText(n.hsd, now)})',
-      ].join('\n')),
+      tileColor: out ? outOfStockColor : (n != null && n.qty > 0 ? expiryColor(expiryStatus(n.hsd, now)) : null),
+      // Nền xanh đậm → chữ trắng (đặt thẳng vào từng chữ, ListTile.textColor không đổi được màu).
+      title: Text(s.product.name, style: TextStyle(fontWeight: FontWeight.w600, color: out ? Colors.white : null)),
+      subtitle: Text(
+        [
+          '${s.summaryText} · ${s.rows.length} date',
+          if (n != null) 'Gần nhất ${formatIsoVn(n.hsd)} (${daysLeftText(n.hsd, now)})',
+        ].join('\n'),
+        style: out ? const TextStyle(color: Colors.white) : null,
+      ),
       isThreeLine: true,
-      trailing: const Icon(Icons.chevron_right),
+      trailing: Icon(Icons.chevron_right, color: out ? Colors.white : null),
       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProductScreen(productKey: s.key))),
     );
   }

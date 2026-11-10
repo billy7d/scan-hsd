@@ -40,6 +40,9 @@ class ProductSummary {
     ].join(' | ');
   }
 
+  /// Hết hàng: mọi date (cả lốc và lẻ) đều có số lượng 0.
+  bool get isOutOfStock => rows.every((r) => r.qty <= 0);
+
   /// Date còn hàng gần hết hạn nhất (không có thì date đầu tiên).
   InventoryRow? get nearest => rows.where((r) => r.qty > 0).firstOrNull ?? rows.firstOrNull;
 
@@ -59,7 +62,8 @@ class ProductSummary {
   }
 }
 
-enum ExpiryFilter { all, near, expired }
+/// Lọc danh sách: tất cả, còn ≤ 90 ngày, đã hết hạn (còn hàng), hết hàng (SL = 0).
+enum ExpiryFilter { all, near, expired, outOfStock }
 
 /// Một dòng của "Dsach tồn kho": tổng số lượng mọi date của một sản phẩm.
 /// Hàng lốc và hàng lẻ là hai dòng riêng vì khác đơn vị (không cộng 1 lốc với 1 hộp lẻ).
@@ -228,7 +232,11 @@ class InventoryCache extends ChangeNotifier {
   /// Tìm theo tên gần đúng (không dấu, sai 1–2 chữ cái, gõ đầu chữ) hoặc theo mã / đuôi mã (≥ 4 số).
   List<ProductSummary> search(String query, {int limit = 30, ExpiryFilter filter = ExpiryFilter.all, DateTime? now}) {
     now ??= DateTime.now();
-    final pool = filter == ExpiryFilter.all ? _products : _filtered(filter, now);
+    final pool = switch (filter) {
+      ExpiryFilter.all => _products,
+      ExpiryFilter.outOfStock => outOfStock(),
+      _ => _filtered(filter, now),
+    };
     final q = query.trim();
     if (q.isEmpty) return _sortedByName(pool).take(limit).toList();
 
@@ -269,6 +277,9 @@ class InventoryCache extends ChangeNotifier {
 
   List<ProductSummary> nearExpiry({DateTime? now}) => _filtered(ExpiryFilter.near, now ?? DateTime.now());
   List<ProductSummary> expired({DateTime? now}) => _filtered(ExpiryFilter.expired, now ?? DateTime.now());
+
+  /// Sản phẩm hết hàng (SL = 0), theo tên.
+  List<ProductSummary> outOfStock() => _sortedByName(_products.where((p) => p.isOutOfStock));
 
   /// Sản phẩm không có mã vạch — để chọn khi nhập hàng không mã.
   List<ProductSummary> get withoutBarcode => _sortedByName(_products.where((p) => p.product.barcode.isEmpty));

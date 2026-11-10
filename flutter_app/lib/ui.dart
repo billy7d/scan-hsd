@@ -9,6 +9,7 @@ import 'models.dart';
 
 const expiredColor = Color(0xFFF4C7C3); // giống màu trong sheet
 const nearColor = Color(0xFFFCE8B2);
+const outOfStockColor = Color(0xFF0D47A1); // xanh nước biển đậm, chữ trắng: hết hàng (SL = 0)
 
 Color? expiryColor(ExpiryStatus s) => switch (s) {
       ExpiryStatus.expired => expiredColor,

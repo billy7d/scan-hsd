@@ -14,7 +14,7 @@ Chủ shop bán đồ ăn dặm nhập khẩu (hàng Anh: Heinz, Ella's Kitchen,
 - **Giá bán theo sản phẩm**: mọi date của một sản phẩm cùng giá; sửa tên/giá áp dụng cho mọi date.
 - **Đọc**: theo mã vạch (quét camera, phải **trùng khớp** mã đã ghi; UPC-A 12 số = EAN-13 có số 0 đầu) hoặc theo **tên gần đúng** (không dấu, sai 1–2 chữ, gõ đầu chữ). Hiện **đủ mọi date** của sản phẩm, gần hết hạn trước.
 - **Sửa số lượng nhanh** trên mỗi date: nút −5 / −1 / +1 / +5, chạm số để gõ; số đổi ngay trên màn hình, các lần bấm trong ~1,2 giây gom thành một lệnh gửi sheet; lỗi → số quay lại; về 0 → hỏi xoá date. Có sửa date, xoá date, sửa tên/giá.
-- **Tô màu**: đỏ nhạt = đã hết hạn, **vàng = còn ≤ 90 ngày**.
+- **Tô màu**: đỏ nhạt = đã hết hạn, **vàng = còn ≤ 90 ngày**, **xanh nước biển đậm (chữ trắng) = hết hàng** (mọi date cả lốc + lẻ có số lượng 0). Màn tìm kiếm (Tất cả sản phẩm / Đọc theo tên) lọc được Tất cả / ≤ 90 ngày / Hết hạn / SL = 0.
 - Miễn phí, không dịch vụ trả phí. Không đưa `API_KEY` thật lên git công khai.
 
 ## 3. Kiến trúc
@@ -53,7 +53,7 @@ Môi trường Windows: Flutter 3.47.7 tại `D:\dev\flutter`, Android SDK `D:\d
 | `flutter_app/lib/main.dart` | Màn chính: 2 nút lớn GHI / ĐỌC, nút HOÁ ĐƠN, ô tìm theo tên, đếm ≤ 90 ngày / hết hạn, ghi hàng không mã. |
 | `lib/scanner_screen.dart` | Quét + công tắc Ghi/Đọc + `scanLoop()` quét liên tục. |
 | `lib/entry_screen.dart` | GHI: tên, giá, nhiều dòng date + số lượng, hỏi cộng dồn (trước khi gửi và khi sheet báo trùng). |
-| `lib/lookup_screen.dart` | ĐỌC: `SearchScreen`, `ProductScreen` (phần Nguyên lốc / Hàng lẻ), `LotCard` (−/+ gom lệnh; trừ thành công → `InvoiceStore.recordAdjust`), mở lốc, sửa date/tên/giá lốc/giá lẻ, xoá date. |
+| `lib/lookup_screen.dart` | ĐỌC: `SearchScreen` (lọc Tất cả / ≤ 90 ngày / Hết hạn / SL = 0 — `ExpiryFilter.outOfStock`, `ProductSummary.isOutOfStock`; hết hàng tô `outOfStockColor`), `ProductScreen` (phần Nguyên lốc / Hàng lẻ), `LotCard` (−/+ gom lệnh; trừ thành công → `InvoiceStore.recordAdjust`), mở lốc, sửa date/tên/giá lốc/giá lẻ, xoá date. |
 | `lib/invoice.dart` | Hoá đơn tạm trên máy (`invoices.json`), không đụng sheet. Hoá đơn tự tạo gom các lần trừ ở ĐỌC theo sản phẩm + loại (+ lại kho thì giảm dòng); hết hạn 30 phút kể từ lần trừ / sửa cuối (`InvoiceStore.ttl`), đang mở sửa/xem trước thì `hold`. Hoá đơn thủ công không tự xoá. Xuất ảnh xong → xoá hoá đơn. |
 | `lib/invoice_screen.dart` | HOÁ ĐƠN: danh sách, sửa (khách, dòng: thêm từ kho / nhập tay, ship), xem trước, lưu ảnh PNG vào Thư viện (`gal`; iOS `NSPhotoLibraryAddUsageDescription`, Android `WRITE_EXTERNAL_STORAGE` ≤ API 29). |
 | `lib/invoice_view.dart` | Mẫu ảnh "HOÁ ĐƠN TẠM TÍNH" rộng 400 (xuất ×3): tên shop `Đồ ăn dặm -  Trà Phương 🍼`, `0816 950 666`, tiêu đề (không in giờ), khách, bảng kẻ nét liền (Sản phẩm/SL/Đơn giá/T.tiền), Tổng, Phí ship, Tổng hoá đơn — mọi chữ màu đen. Không QR / STK / lời cảm ơn (theo yêu cầu). Giờ bấm Xuất chỉ dùng đặt tên file ảnh. |
